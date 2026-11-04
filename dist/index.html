@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#fafafa">
+  <meta name="description" content="Pointwise — draw interactive metro-style maps for your ideas.">
+  <title>Pointwise — Map studio</title>
+  <link rel="stylesheet" href="./style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%232a2930'/%3E%3Cpath d='M10 29V12h12a6 6 0 010 12H10' fill='none' stroke='%23dedaf6' stroke-width='4' stroke-linejoin='round'/%3E%3Ccircle cx='29' cy='29' r='3' fill='%23948bbd'/%3E%3C/svg%3E">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Pointwise home">pointwise<span class="brand-dot">.</span></a>
+    <div class="document-head" hidden><span class="document-divider"></span><button id="rename-map" title="Rename map"><span id="document-name"></span><span class="chevron">⌄</span></button><span class="saved-state" id="saved-state" role="status"><i></i> Saved</span></div>
+    <div class="header-actions">
+      <div class="panel-controls" role="group" aria-label="Workspace panels">
+        <button class="icon-button" id="network-toggle" aria-label="Hide lines panel" aria-controls="lines-panel" aria-expanded="true" title="Toggle lines panel ([)" data-icon="panel-left"></button>
+        <button class="icon-button" id="properties-toggle" aria-label="Hide properties panel" aria-controls="inspector" aria-expanded="true" title="Toggle properties panel (])" data-icon="panel-right"></button>
+        <button class="icon-button" id="focus-toggle" aria-label="Enter fullscreen" aria-pressed="false" title="Fullscreen (\)" data-icon="focus"></button>
+      </div>
+      <button class="button quiet" id="present" aria-label="Present" hidden><span data-icon="play"></span><span>Present</span></button>
+      <button class="button primary" id="export" aria-label="Export"><span data-icon="export"></span><span>Export</span></button>
+    </div>
+  </header>
+  <div class="workspace">
+    <aside class="sidebar left-sidebar" id="lines-panel" aria-label="Lines and map settings">
+      <div class="panel-body"><div class="section-title"><h2>Lines</h2><button class="icon-button" id="add-line" title="Add a line (L)" aria-label="Add a line" data-icon="plus"></button></div>
+      <div id="line-list" class="line-list"></div>
+      <button class="add-line-button" id="draw-new-line"><span data-icon="plus"></span> Add line <span class="keycap">L</span></button>
+      <div class="sidebar-section"><button class="settings-link" id="project-file"><span data-icon="file"></span><span>Project file</span><span class="file-status-dot" id="file-status-dot" aria-hidden="true"></span></button>
+        <button class="settings-link" id="map-styles"><span data-icon="sliders"></span><span>Global style</span><span class="settings-arrow">↗</span></button>
+        <details class="map-settings"><summary>Canvas</summary><button class="settings-link" id="map-details">Map details <span class="settings-arrow">↗</span></button><div class="theme-options" role="group" aria-label="Map theme"><button data-theme="paper"><span class="theme-swatch paper-swatch"></span>Paper</button><button data-theme="night"><span class="theme-swatch night-swatch"></span>Night</button><button data-theme="mono"><span class="theme-swatch mono-swatch"></span>Mono</button></div><label class="switch-row">Grid <input id="show-grid" type="checkbox" checked><span class="switch"></span></label><label class="switch-row">Snap <input id="snap-grid" type="checkbox" checked><span class="switch"></span></label></details>
+      </div>
+      </div>
+      <div class="sidebar-utilities"><button class="button quiet" id="new-map"><span data-icon="plus"></span>New map</button><button class="icon-button" id="help" aria-label="Help and keyboard shortcuts" title="Help and shortcuts" data-icon="help"></button></div>
+    </aside>
+    <main class="canvas-area" id="canvas-area" aria-label="Map workspace">
+      <svg id="map-canvas" xmlns="http://www.w3.org/2000/svg" tabindex="0" role="application" aria-label="Metro flowchart editor" preserveAspectRatio="xMidYMid meet">
+        <defs><pattern id="dot-grid" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="0" cy="0" r="1" fill="currentColor"/></pattern></defs>
+        <rect class="canvas-bg" x="-100000" y="-100000" width="200000" height="200000"/>
+        <rect id="grid-layer" x="-100000" y="-100000" width="200000" height="200000" fill="url(#dot-grid)"/>
+        <g id="route-layer"></g><g id="station-layer"></g><g id="route-edit-layer"></g><g id="ghost-layer" pointer-events="none"></g>
+      </svg>
+      <div class="map-heading"><h2 id="map-title"></h2><p id="map-subtitle"></p></div>
+
+      <div id="endpoint-actions" class="endpoint-actions" role="group" aria-label="Continue from this stop" hidden></div>
+      <div class="mode-hint" id="mode-hint"></div>
+      <div class="map-legend" id="map-legend"></div>
+      <div class="canvas-bottom" role="toolbar" aria-label="Canvas tools"><div class="history-buttons"><button class="icon-button" id="undo" title="Undo (⌘Z)" aria-label="Undo" data-icon="undo"></button><button class="icon-button" id="redo" title="Redo (⌘⇧Z)" aria-label="Redo" data-icon="redo"></button></div><span class="dock-divider"></span><div class="toolbar" role="toolbar" aria-label="Drawing tools"><button data-tool="select" title="Select (V)" aria-label="Select and move" data-icon="cursor"></button><span class="toolbar-separator"></span><button data-tool="line" title="Draw line (L)" aria-label="Draw a line" data-icon="route"></button><button data-tool="stop" title="Add stop (S)" aria-label="Add a stop" data-icon="station"></button></div><span class="dock-divider"></span><div class="zoom-control"><button class="icon-button" id="zoom-out" title="Zoom out" aria-label="Zoom out" data-icon="minus"></button><button id="zoom-value" title="Fit map">100%</button><button class="icon-button" id="zoom-in" title="Zoom in" aria-label="Zoom in" data-icon="plus"></button><span></span><button class="icon-button" id="fit" title="Fit map (F)" aria-label="Fit map" data-icon="fit"></button></div></div>
+      <button class="button exit-present" id="exit-present"><span data-icon="close"></span> Exit presentation</button>
+    </main>
+    <aside class="sidebar inspector" id="inspector" aria-label="Properties"><div id="inspector-content"></div></aside>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<dialog id="modal"><div id="modal-content"></div></dialog>
+<div id="color-popover" class="color-popover" popover="auto" aria-label="Choose a color" hidden></div>
+<input type="file" id="import-file" accept="application/json,.json" hidden>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
