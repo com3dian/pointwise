@@ -1,4 +1,4 @@
-"""Bundle the dependency-free app into an HTML file that opens without a server."""
+"""Bundle the app and Markdown parser into an HTML file that opens without a server."""
 from pathlib import Path
 import re
 
@@ -14,7 +14,16 @@ def module(filename, exports):
     return f"const {{ {names} }} = (() => {{\n{source}\nreturn {{ {names} }};\n}})();\n"
 
 
-script = module("geometry.js", ["snapPoint", "routePoints", "roundedPath", "nearestOnLine", "getBounds"])
+vendor = (DIST / "vendor/marked.esm.js").read_text()
+export_block = re.search(r"export\s*\{([^}]+)\};?", vendor)
+bindings = {parts[-1].strip(): parts[0].strip() for entry in export_block[1].split(",") if (parts := entry.split(" as "))}
+vendor = vendor[:export_block.start()] + vendor[export_block.end():]
+vendor = re.sub(r"^//# sourceMappingURL=.*$", "", vendor, flags=re.MULTILINE)
+vendor_license = (DIST / "vendor/marked.LICENSE.md").read_text().replace("*/", "* /")
+script = f"/* Marked license\n{vendor_license}\n*/\nconst MarkdownParser = (() => {{\n{vendor}\nreturn {bindings['Marked']};\n}})();\n"
+script += module("markdown.js", ["descriptionLink", "renderDescription"])
+script += module("presentation.js", ["stationStoryPosition"])
+script += module("geometry.js", ["snapPoint", "routePoints", "roundedPath", "nearestOnLine", "getBounds"])
 script += module("symbols.js", ["SYMBOL_TYPES", "normalizeSymbol", "normalizeSymbolColors", "renderStationSymbol", "symbolExtent", "normalizeCrossArms", "resolveCrossArms"])
 script += module("labels.js", ["TEXT_DEFAULTS", "normalizeTextStyle", "labelUsesDefaults", "effectiveLabel", "labelFont", "labelLayout", "labelCapsuleBounds", "moveLabelOffset"])
 script += module("shortcuts.js", ["mapZoomShortcut"])

@@ -3,6 +3,8 @@ import { JSONFileAutosave, rememberProjectFile, recallProjectFile } from './proj
 import { removeMapItem, repairEmptyRoutes } from './deletion.js';
 import { normalizeTextStyle, labelUsesDefaults, effectiveLabel, labelFont, labelLayout, labelCapsuleBounds, moveLabelOffset } from './labels.js';
 import { mapZoomShortcut } from './shortcuts.js';
+import { renderDescription } from './markdown.js';
+import { stationStoryPosition } from './presentation.js';
 import { snapPoint, routePoints, roundedPath, nearestOnLine, getBounds } from './geometry.js';
 import { templates } from './templates.js';
 import { buildSVG } from './export.js';
@@ -56,7 +58,7 @@ try {
     if(saved.restore && typeof saved.restore.left==='boolean' && typeof saved.restore.right==='boolean') panels.restore=saved.restore;
   }
 } catch { /* Workspace preferences are optional. */ }
-let editingPanels=null, fullscreenPanels=null;
+let editingWorkspace=null;
 
 let map, loadedSavedMap=false;
 try { map = validateMap(JSON.parse(localStorage.getItem(STORAGE))); loadedSavedMap=true; } catch { map = validateMap(templates[0].create()); }
@@ -104,8 +106,9 @@ function save() {
   projectAutosave.queue();
 }
 function snapshot() { undoStack.push(clone(map)); if(undoStack.length>80)undoStack.shift(); redoStack=[]; }
-function commit(change, {inspector=true}={}) { snapshot(); change(); save(); render(inspector); }
+function commit(change, {inspector=true}={}) { if(presenting)return; snapshot(); change(); save(); render(inspector); }
 function history(direction) {
+  if(presenting)return;
   if(drag)endDrag();
   const from=direction==='undo'?undoStack:redoStack, to=direction==='undo'?redoStack:undoStack;
   if (!from.length) return;
@@ -117,45 +120,52 @@ function syncPanels() {
   document.body.classList.toggle('panels-left-hidden',!panels.left);
   document.body.classList.toggle('panels-right-hidden',!panels.right);
   $('#lines-panel').inert=!panels.left||presenting;
-  $('#inspector').inert=!panels.right;
+  $('#inspector').inert=!panels.right||presenting;
   for(const [side,button,label] of [['left',$('#network-toggle'),'lines'],['right',$('#properties-toggle'),'properties']]) {
     button.setAttribute('aria-expanded',String(panels[side]));
     button.setAttribute('aria-label',`${panels[side]?'Hide':'Show'} ${label} panel`);
   }
-  const focused=!!document.fullscreenElement;
   renderEndpointActions();
-  $('#focus-toggle').setAttribute('aria-pressed',String(focused));
-  $('#focus-toggle').setAttribute('aria-label',focused?'Exit fullscreen':'Enter fullscreen');
-  if(!presenting&&!fullscreenPanels)try{localStorage.setItem(UI_STORAGE,JSON.stringify(panels));}catch{}
+  $('#focus-toggle').setAttribute('aria-pressed',String(presenting));
+  $('#focus-toggle').setAttribute('aria-label',presenting?'Exit presentation':'Present fullscreen');
+  if(!presenting)try{localStorage.setItem(UI_STORAGE,JSON.stringify(panels));}catch{}
 }
 function togglePanel(side) {
+  if(presenting)return;
   panels[side]=!panels[side];panels.restore=null;
   if(!wideLayout()&&panels[side])panels[side==='left'?'right':'left']=false;
   syncPanels();
 }
 async function toggleFocus() {
+  if(presenting){await exitPresentation();return;}
+  setPresent(true);
   try {
-    if(document.fullscreenElement){await document.exitFullscreen();return;}
-    if(!document.documentElement.requestFullscreen){notify('Fullscreen is unavailable in this browser.');return;}
-    fullscreenPanels=clone(panels);
-    await document.documentElement.requestFullscreen();
+    if(document.documentElement.requestFullscreen&&!document.fullscreenElement)await document.documentElement.requestFullscreen();
+    if(!presenting&&document.fullscreenElement)await document.exitFullscreen();
   } catch {
-    fullscreenPanels=null;syncPanels();notify('Fullscreen could not be opened in this browser.');
+    notify('Presentation opened. Fullscreen is unavailable in this browser.');
   }
 }
+async function exitPresentation() {
+  if(document.fullscreenElement) {
+    try { await document.exitFullscreen(); }
+    catch { notify('Press Esc to leave fullscreen.');return; }
+  }
+  setPresent(false);
+}
 document.addEventListener('fullscreenchange',()=>{
-  if(document.fullscreenElement){panels.left=false;panels.right=false;}
-  else if(fullscreenPanels){panels=fullscreenPanels;fullscreenPanels=null;}
-  syncPanels();
+  if(!document.fullscreenElement&&presenting)setPresent(false);
+  else if(presenting)requestAnimationFrame(()=>fitMap(false));
 });
 function setSelection(type, nid, pointId=null, additive=false) {
   closeColorPalette();
   activeRoutePointId=pointId;
-  selection=type?(additive?toggleSelection(selection,{type,id:nid}):{type,id:nid}):null;
+  if(presenting&&type!=='node')type=null;
+  selection=type?(additive&&!presenting?toggleSelection(selection,{type,id:nid}):{type,id:nid}):null;
   if(type==='line')activeLineId=nid;
-  if(presenting){panels.right=!!type;syncPanels();}
-  else if(type&&!wideLayout()&&panels.left){panels.left=false;panels.right=true;syncPanels();}
+  if(!presenting&&type&&!wideLayout()&&panels.left){panels.left=false;panels.right=true;syncPanels();}
   render();
+  if(presenting&&selectedNode())$('#station-story').focus({preventScroll:true});
 }
 function render(inspector=true) {
   $('#document-name').textContent=map.title;
@@ -231,7 +241,7 @@ function renderMap() {
     const badge=capsule?`<rect class="station-label-capsule" data-label-capsule="${esc(n.id)}" x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="${box.height/2}" fill="${n.labelFillColor==='auto'?paperColor():n.labelFillColor}" stroke="${n.labelBorderColor==='auto'?textColor:n.labelBorderColor}" stroke-width="${n.labelBorderWidth}" ${transform}/>`:'';
     return `<g class="station-group ${selected?'selected':''}" data-node-id="${esc(n.id)}" role="button" tabindex="0" aria-pressed="${selected}" aria-label="${esc(n.name)}, ${member.length>1?'interchange, ':''}${esc(member.map(l=>l.name).join(', '))}"><circle class="station-hit" cx="${n.x}" cy="${n.y}" r="${Math.max(17,extent+5)}"/>${selected?`<circle class="station-ring" cx="${n.x}" cy="${n.y}" r="${extent+6}" stroke="${color}"/>`:''}${symbol}${badge}<text class="station-label" data-label-node="${esc(n.id)}" tabindex="0" aria-label="Move name: ${esc(n.name)}" style="font-size:${n.labelFontSize}px;font-family:${labelFont(n.labelFontFamily)};font-weight:${n.labelWeight};fill:${textColor};${capsule?'stroke:none;':''}" x="${x}" y="${y}" text-anchor="${anchor}" ${transform}>${esc(n.name)}</text></g>`;
   }).join('');
-  renderRouteHandles();renderEndpointActions();
+  renderRouteHandles();renderEndpointActions();renderStationStory();
 }
 function labelCoordinates(n) {
   n=effectiveNode(map,n);
@@ -433,21 +443,19 @@ function renderInspector() {
   if(key!==inspectorSelectionKey){$('#inspector-content').scrollTop=0;inspectorSelectionKey=key;}
   $('#inspector').classList.toggle('has-selection',!!selection);
   const close=`<button class="icon-button" data-action="close-selection" aria-label="Close details" title="Close">${icon('close')}</button>`;
-  if(presenting) {
-    $('#inspector-content').innerHTML=n?`<div class="inspector-kicker">Station ${close}</div><h2 class="inspector-title">${esc(n.name)}</h2><div class="station-lines">${nodeLines(n.id).map(l=>`<span class="station-line-tag" style="--line-color:${l.color}"><i></i>${esc(l.name)}</span>`).join('')}</div><div class="station-details">${esc(n.description||'No description.')}</div>${safeUrl(n.url)?`<a class="present-link" href="${esc(safeUrl(n.url))}" target="_blank" rel="noopener noreferrer">Open link ↗</a>`:''}`:l?`<div class="inspector-kicker">Line ${close}</div><h2 class="inspector-title">${esc(l.name)}</h2><div class="selected-visual"><span class="line-code" style="--line-color:${l.color}">${esc(l.code)}</span><span>${lineNodes(l).filter(n=>n.kind!=='bend').length} stops</span></div>${lineNodes(l).filter(n=>n.kind!=='bend').map(n=>`<button class="line-row" data-present-node="${esc(n.id)}"><span class="hint-number">○</span><span class="line-name">${esc(n.name)}</span></button>`).join('')}`:`<div class="inspector-kicker">Map</div><h2 class="inspector-title">${esc(map.title)}</h2><p class="inspector-desc">Select a line or stop to explore.</p>`;
-    return;
-  }
+  if(presenting) { $('#inspector-content').innerHTML='';return; }
   if(selection?.type==='multi') {
     $('#inspector-content').innerHTML=batchInspector(close);
     syncBatchControls();
   } else if(n) {
     const bend=n.kind==='bend';
     const tabs=`<div class="inspector-tabs" role="group" aria-label="Station properties"><button type="button" data-inspector-tab="style" aria-pressed="${tab==='style'}">Style</button><button type="button" data-inspector-tab="content" aria-pressed="${tab==='content'}">Content</button></div>`;
-    $('#inspector-content').innerHTML=`<div class="inspector-kicker">${bend?'Bend':'Station'} ${close}</div>${bend?'<h2 class="inspector-title">Route bend</h2>':''}${!bend?`<div class="field inspector-name-field"><label for="station-name">Name</label><input class="input inspector-name" title="Rename stop" id="station-name" data-node-field="name" maxlength="100" value="${esc(n.name)}"></div><div class="station-continue-actions">${endpointButtons(n)}</div>${tabs}<div data-inspector-section="style" ${tab!=='style'?'hidden':''}><details class="appearance-section" data-inspector-section-key="text"><summary>Text</summary>${textStyleControls(n)}${labelPlacementControls(n)}</details>${stationSymbolControls(n)}</div><div data-inspector-section="content" ${tab!=='content'?'hidden':''}><div class="field"><label for="station-description">Description</label><textarea id="station-description" data-node-field="description" maxlength="10000" placeholder="Add context for this stop…">${esc(n.description)}</textarea></div><div class="field"><label for="station-url">Link</label><input class="input" type="url" id="station-url" data-node-field="url" value="${esc(n.url)}" placeholder="https://…"></div></div>`:''}<div class="field"><span class="field-label">Connected lines</span><div class="station-lines">${nodeLines(n.id).map(l=>`<button class="station-line-tag" data-select-line="${esc(l.id)}" style="--line-color:${l.color}"><i></i>${esc(l.name)}</button>`).join('')||'<span class="inspector-desc">No connected lines</span>'}</div></div><div class="inspector-divider"></div><button class="button outlined full-width" data-action="toggle-bend">${icon(bend?'station':'route')}${bend?'Convert to station':'Convert to bend'}</button><div class="delete-area"><button class="button danger full-width" data-action="delete">${icon('trash')} Delete ${bend?'bend':'station'}</button></div>`;
+    $('#inspector-content').innerHTML=`<div class="inspector-kicker">${bend?'Bend':'Station'} ${close}</div>${bend?'<h2 class="inspector-title">Route bend</h2>':''}${!bend?`<div class="field inspector-name-field"><label for="station-name">Name</label><input class="input inspector-name" title="Rename stop" id="station-name" data-node-field="name" maxlength="100" value="${esc(n.name)}"></div><div class="station-continue-actions">${endpointButtons(n)}</div>${tabs}<div data-inspector-section="style" ${tab!=='style'?'hidden':''}><details class="appearance-section" data-inspector-section-key="text"><summary>Text</summary>${textStyleControls(n)}${labelPlacementControls(n)}</details>${stationSymbolControls(n)}</div><div data-inspector-section="content" ${tab!=='content'?'hidden':''}><div class="field"><div class="description-label"><label for="station-description">Description</label><span>Markdown</span></div><textarea id="station-description" data-node-field="description" maxlength="10000" placeholder="Write a description in Markdown…">${esc(n.description)}</textarea><details class="description-preview" data-inspector-section-key="description-preview"><summary>Preview</summary><div id="description-preview" class="markdown-body">${renderDescription(n.description)||'<p class="story-empty">No description yet.</p>'}</div></details></div><div class="field"><label for="station-url">Link</label><input class="input" type="url" id="station-url" data-node-field="url" value="${esc(n.url)}" placeholder="https://…"></div></div>`:''}<div class="field"><span class="field-label">Connected lines</span><div class="station-lines">${nodeLines(n.id).map(l=>`<button class="station-line-tag" data-select-line="${esc(l.id)}" style="--line-color:${l.color}"><i></i>${esc(l.name)}</button>`).join('')||'<span class="inspector-desc">No connected lines</span>'}</div></div><div class="inspector-divider"></div><button class="button outlined full-width" data-action="toggle-bend">${icon(bend?'station':'route')}${bend?'Convert to station':'Convert to bend'}</button><div class="delete-area"><button class="button danger full-width" data-action="delete">${icon('trash')} Delete ${bend?'bend':'station'}</button></div>`;
   } else if(l) {
     $('#inspector-content').innerHTML=`<div class="inspector-kicker">Line ${close}</div><div class="field inspector-name-field"><label for="line-name">Name</label><input class="input inspector-name" title="Rename line" id="line-name" maxlength="100" data-line-field="name" value="${esc(l.name)}"></div><div class="field compact-field"><label for="line-code">Badge</label><input class="input" id="line-code" maxlength="5" data-line-field="code" value="${esc(l.code)}"></div><details class="appearance-section" data-inspector-section-key="line"><summary>Line appearance</summary>${colorControl('Line color','color',l.color,'line')}${lineStyleControls(l)}</details><button class="button primary full-width" data-action="extend-line">${icon('route')} ${drawing&&activeLineId===l.id?'Drawing… Enter to finish':'Continue line'}</button><div class="delete-area"><button class="button danger full-width" data-action="delete">${icon('trash')} Delete line</button></div>`;
   } else {
-    $('#inspector-content').innerHTML=`<div class="inspector-kicker">Map</div><h2 class="inspector-title">${esc(map.title)}</h2><p class="inspector-desc">Select a line or stop to edit.</p>`;
+    const stops=map.nodes.filter(node=>node.kind!=='bend').length;
+    $('#inspector-content').innerHTML=`<div class="inspector-kicker">Project</div><div class="field inspector-name-field"><label for="project-title">Project title</label><input class="input inspector-name" id="project-title" data-map-field="title" title="Rename project" maxlength="100" value="${esc(map.title)}"></div><div class="field"><label for="project-subtitle">Subtitle</label><textarea class="project-subtitle" id="project-subtitle" data-map-field="subtitle" maxlength="200" rows="3" placeholder="Add a short description…">${esc(map.subtitle)}</textarea></div><dl class="project-summary" aria-label="Project overview"><div><dt>${map.lines.length===1?'line':'lines'}</dt><dd>${map.lines.length}</dd></div><div><dt>${stops===1?'stop':'stops'}</dt><dd>${stops}</dd></div></dl>`;
   }
   $$('#inspector-content details[data-inspector-section-key]').forEach(el=>el.open=opened.has(el.dataset.inspectorSectionKey));
 }
@@ -480,6 +488,32 @@ function continueFromEndpoint(lineId,nodeId) {
   setTool('line');render();canvas.focus();
 }
 function safeUrl(value) { try { const u=new URL(value); return ['https:','http:'].includes(u.protocol)?u.href:null; }catch{return null;} }
+let storyNodeKey='';
+function renderStationStory() {
+  const host=$('#station-story'),node=selectedNode();
+  if(!presenting||!node||node.kind==='bend'){host.hidden=true;host.innerHTML='';storyNodeKey='';return;}
+  const key=JSON.stringify([node.id,node.name,node.description,node.url]);
+  if(key!==storyNodeKey) {
+    storyNodeKey=key;
+    host.innerHTML=`<div class="station-story-heading"><h2 id="station-story-title">${esc(node.name)}</h2><button class="icon-button" data-action="close-story" aria-label="Close description" title="Close">${icon('close')}</button></div><div class="station-story-content markdown-body">${renderDescription(node.description)||'<p class="story-empty">No description yet.</p>'}${safeUrl(node.url)?`<p><a href="${esc(safeUrl(node.url))}" target="_blank" rel="noopener noreferrer">Open link ↗</a></p>`:''}</div>`;
+  }
+  positionStationStory();
+}
+function positionStationStory() {
+  const host=$('#station-story'),raw=selectedNode();
+  if(!presenting||!raw||!host.innerHTML){host.hidden=true;return;}
+  const matrix=canvas.getScreenCTM();if(!matrix){host.hidden=true;return;}
+  const point=new DOMPoint(raw.x,raw.y).matrixTransform(matrix),frame=canvasArea.getBoundingClientRect();
+  const x=point.x-frame.left,y=point.y-frame.top;
+  if(x<0||x>frame.width||y<0||y>frame.height){host.hidden=true;return;}
+  host.hidden=false;
+  const node=effectiveNode(map,raw),interchange=nodeLines(raw.id).filter(l=>l.visible).length>1;
+  const radius=symbolExtent(node,interchange,node.symbol==='cross'?stationDirections(map,node.id):[])*Math.hypot(matrix.a,matrix.b);
+  const placed=stationStoryPosition({x,y,radius},{width:host.offsetWidth,height:host.offsetHeight},{width:frame.width,height:frame.height});
+  host.style.left=`${placed.left}px`;host.style.top=`${placed.top}px`;
+  host.style.setProperty('--story-arrow',`${placed.arrow}px`);host.dataset.placement=placed.placement;
+}
+new ResizeObserver(()=>positionStationStory()).observe($('#station-story'));
 
 function setTool(next) {
   if(drawing&&next!=='line')finishLine(false);
@@ -546,7 +580,7 @@ function applyView(next,animate=false) {
   function tick(now){const t=Math.min((now-since)/260,1),e=1-(1-t)**3; for(const k of ['x','y','width','height'])view[k]=start[k]+(next[k]-start[k])*e; updateView();if(t<1)animateFrame=requestAnimationFrame(tick);}
   animateFrame=requestAnimationFrame(tick);
 }
-function updateView(){canvas.setAttribute('viewBox',`${view.x} ${view.y} ${view.width} ${view.height}`);$('#zoom-value').textContent=`${Math.round(fitWidth/view.width*100)}%`;renderRouteHandles();renderEndpointActions();}
+function updateView(){canvas.setAttribute('viewBox',`${view.x} ${view.y} ${view.width} ${view.height}`);$('#zoom-value').textContent=`${Math.round(fitWidth/view.width*100)}%`;renderRouteHandles();renderEndpointActions();positionStationStory();}
 function fitMap(animate=true) {
   const width=canvas.clientWidth,height=canvas.clientHeight;
   if(!width||!height)return;
@@ -575,7 +609,11 @@ canvas.addEventListener('pointerdown',e=>{
   lastCanvasDown={time:now,x:e.clientX,y:e.clientY,tool,lineId:handleEl?.dataset.routeLine||lineEl?.dataset.lineId};
   const pan=tool==='hand'||spaceDown||e.button===1;
   if(pan){e.preventDefault();drag={type:'pan',clientX:e.clientX,clientY:e.clientY,view:{...view},moved:false};canvas.setPointerCapture(e.pointerId);canvas.classList.add('panning');return;}
-  if(presenting){if(nodeEl)setSelection('node',nodeEl.dataset.nodeId);else if(lineEl)setSelection('line',lineEl.dataset.lineId);else setSelection(null);return;}
+  if(presenting){
+    if(nodeEl){e.preventDefault();setSelection('node',nodeEl.dataset.nodeId);}
+    else {setSelection(null);drag={type:'pan',clientX:e.clientX,clientY:e.clientY,view:{...view},moved:false};canvas.setPointerCapture(e.pointerId);}
+    return;
+  }
   if(tool==='line'){if(double&&drawing){finishLine();lastCanvasDown=null;}else addLinePoint(p,nodeEl?getNode(nodeEl.dataset.nodeId):nearestNode(p),e.shiftKey);return;}
   if(tool==='stop'){addStop(p,lineEl?.dataset.lineId);return;}
   if(e.shiftKey) {
@@ -688,6 +726,7 @@ canvas.addEventListener('keydown',e=>{
 canvas.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){const node=e.target.closest('[data-node-id]');if(node){e.preventDefault();setSelection('node',node.dataset.nodeId,null,e.shiftKey&&!presenting);}}});
 
 document.addEventListener('click',e=>{
+  if(presenting){if(e.target.closest('[data-action="close-story"]'))setSelection(null);return;}
   const continuation=e.target.closest('[data-continue-line]');
   if(continuation)continueFromEndpoint(continuation.dataset.continueLine,continuation.dataset.continueNode);
   const select=e.target.closest('[data-select-line]');if(select&&!e.target.closest('[data-toggle-line]'))setSelection('line',select.dataset.selectLine,null,e.shiftKey&&!presenting);
@@ -749,7 +788,20 @@ document.addEventListener('click',e=>{
   const presentNode=e.target.closest('[data-present-node]');if(presentNode)setSelection('node',presentNode.dataset.presentNode);
 });
 let editingField=null;
-document.addEventListener('focusin',e=>{if(e.target.matches('[data-node-field],[data-line-field],[data-cross-field],[data-default-field],[data-batch-node-field],[data-batch-line-field]'))editingField={target:e.target,changed:false};});
+document.addEventListener('focusin',e=>{if(e.target.matches('[data-map-field],[data-node-field],[data-line-field],[data-cross-field],[data-default-field],[data-batch-node-field],[data-batch-line-field]'))editingField={target:e.target,changed:false};});
+function editMapField(e) {
+  const target=e.target,key=target.dataset.mapField;
+  if(!['title','subtitle'].includes(key))return;
+  const text=target.value.slice(0,key==='title'?100:200);
+  const value=key==='title'?text.trim()||'Untitled map':e.type==='change'?text.trim():text;
+  if(map[key]!==value) {
+    if(!editingField||editingField.target!==target)editingField={target,changed:false};
+    if(!editingField.changed){snapshot();editingField.changed=true;}
+    map[key]=value;save();render(false);
+  }
+  if(e.type==='change'){target.value=map[key];editingField=null;}
+}
+document.addEventListener('focusout',e=>{if(e.target.dataset.mapField)editMapField({target:e.target,type:'change'});});
 function editCrossArm(e) {
   const target=e.target,n=selectedNode(),index=Number(target.dataset.crossIndex),key=target.dataset.crossField;
   if(!n||n.symbol!=='cross'||n.symbolCrossMode!=='manual'||target.value===''||!target.validity.valid)return;
@@ -788,6 +840,8 @@ function editBatchField(target) {
   render(['symbolOutline','symbolFill','labelPosition','labelShape'].includes(key));syncBatchControls();
 }
 function editField(e){
+  if(presenting)return;
+  if(e.target.dataset.mapField){editMapField(e);return;}
   if(e.target.dataset.batchNodeField||e.target.dataset.batchLineField){editBatchField(e.target);return;}
   if(e.target.dataset.defaultField){editDefaultField(e);return;}
   if(e.target.dataset.crossField){editCrossArm(e);return;}
@@ -811,6 +865,7 @@ function editField(e){
   if(key==='symbolOutlineColor'){record.symbolOutline='custom';const source=$('[data-node-field="symbolOutline"]');if(source)source.value='custom';}
   if(key==='symbolFillColor'){record.symbolFill='custom';const source=$('[data-node-field="symbolFill"]');if(source)source.value='custom';}
   record[key]=value;save();render(['symbolCrossMode','labelPosition','symbolOutline','symbolFill','labelShape'].includes(key));
+  if(key==='description'&&$('#description-preview'))$('#description-preview').innerHTML=renderDescription(value)||'<p class="story-empty">No description yet.</p>';
   $$('[data-node-field]').filter(el=>el!==target&&el.dataset.nodeField===key).forEach(el=>el.value=value);
   $$('[data-value-for]').filter(el=>el.dataset.valueFor===key).forEach(el=>el.textContent=formatControlValue(key,value));
   const preview=$(`[data-paint-preview="${nodeKey?'node':'line'}-${key}"]`);if(preview)preview.style.setProperty('--paint-color',value);
@@ -850,12 +905,41 @@ $('#zoom-in').onclick=()=>zoom(.8);$('#zoom-out').onclick=()=>zoom(1.25);$('#zoo
 $('#show-grid').onchange=e=>{showGrid=e.target.checked;render(false);};$('#snap-grid').onchange=e=>snapGrid=e.target.checked;
 function setPresent(value){
   if(value===presenting)return;
-  if(value){finishLine(false);editingPanels=clone(panels);panels={left:false,right:false,restore:null};}
-  else if(editingPanels){panels=editingPanels;editingPanels=null;}
-  presenting=value;document.body.classList.toggle('presenting',value);syncPanels();
-  setTool('select');selection=null;render();requestAnimationFrame(()=>{lastCanvasSize={width:canvas.clientWidth,height:canvas.clientHeight};fitMap(false);});
+  closeColorPalette();
+  const restored=value?null:editingWorkspace;
+  if(drag)endDrag();
+  if(value) {
+    finishLine(false);
+    editingWorkspace={panels:clone(panels),view:{...view},fitWidth,selection:clone(selection),activeLineId,activeRoutePointId,tool,viewport:{width:canvas.clientWidth,height:canvas.clientHeight},inspectorTab:$('#inspector-content [data-inspector-tab][aria-pressed="true"]')?.dataset.inspectorTab||'style',inspectorOpen:$$('#inspector-content details[data-inspector-section-key][open]').map(el=>el.dataset.inspectorSectionKey),inspectorScroll:$('#inspector-content').scrollTop};
+    panels={left:false,right:false,restore:null};
+    if($('#modal').open)$('#modal').close();
+  } else if(restored) {panels=restored.panels;editingWorkspace=null;}
+  presenting=value;document.body.classList.toggle('presenting',value);
+  $('.brand').inert=value;
+  selection=value?null:restored?.selection||null;
+  activeLineId=value?null:restored?.activeLineId||null;
+  activeRoutePointId=value?null:restored?.activeRoutePointId||null;
+  spaceDown=false;canvas.style.cursor='';syncPanels();setTool(value?'select':restored?.tool||'select');render();
+  if(restored) {
+    $$('#inspector-content [data-inspector-tab]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.inspectorTab===restored.inspectorTab)));
+    $$('#inspector-content [data-inspector-section]').forEach(section=>section.hidden=section.dataset.inspectorSection!==restored.inspectorTab);
+    $$('#inspector-content details[data-inspector-section-key]').forEach(section=>section.open=restored.inspectorOpen.includes(section.dataset.inspectorSectionKey));
+    $('#inspector-content').scrollTop=restored.inspectorScroll;
+  }
+  if(value)canvas.focus({preventScroll:true});else $('#focus-toggle').focus({preventScroll:true});
+  requestAnimationFrame(()=>{
+    if(value!==presenting)return;
+    lastCanvasSize={width:canvas.clientWidth,height:canvas.clientHeight};
+    if(value)fitMap(false);
+    else if(restored) {
+      const scale=restored.view.width/Math.max(1,restored.viewport.width);
+      const width=lastCanvasSize.width*scale,height=lastCanvasSize.height*scale;
+      fitWidth=restored.fitWidth*lastCanvasSize.width/Math.max(1,restored.viewport.width);
+      applyView({x:restored.view.x+(restored.view.width-width)/2,y:restored.view.y+(restored.view.height-height)/2,width,height});
+    }
+  });
 }
-$('#present').onclick=()=>setPresent(true);$('#exit-present').onclick=()=>setPresent(false);
+$('#present').onclick=toggleFocus;$('#exit-present').onclick=()=>void exitPresentation();
 
 document.addEventListener('keydown',e=>{
   const factor=mapZoomShortcut(e);if(factor===null||e.defaultPrevented)return;
@@ -866,11 +950,21 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&paletteTarget){e.preventDefault();closeColorPalette();return;}
   if(e.target.closest('input,textarea,select,[contenteditable]')||$('#modal').open)return;
   const mod=e.metaKey||e.ctrlKey;
+  if(presenting) {
+    const key=e.key.toLowerCase();
+    if(key==='escape'||key==='\\'){e.preventDefault();void exitPresentation();return;}
+    if(key==='delete'||key==='backspace'||mod&&['z','s'].includes(key)){e.preventDefault();return;}
+    if(e.code==='Space'&&!e.target.closest('button,a,#station-story')){e.preventDefault();spaceDown=true;canvas.style.cursor='grab';return;}
+    if(!mod&&!e.target.closest('#station-story')) {
+      if(key==='+'||key==='=')zoom(.8);if(key==='-')zoom(1.25);if(key==='f')fitMap();
+    }
+    return;
+  }
   if(mod&&e.key.toLowerCase()==='z'){e.preventDefault();if(!presenting)history(e.shiftKey?'redo':'undo');return;}
   if(mod&&e.key.toLowerCase()==='s'){e.preventDefault();void saveProject();return;}
   if(e.key==='Escape'&&drag?.type==='label'){e.preventDefault();map=drag.before;drag=null;render();return;}
   if(e.key==='Escape'&&drag?.type==='route-point'){e.preventDefault();cancelRoutePointDrag();return;}
-  if(e.key==='Escape'){if(presenting)setPresent(false);else {finishLine(false);setTool('select');setSelection(null);}return;}
+  if(e.key==='Escape'){finishLine(false);setTool('select');setSelection(null);return;}
   if(presenting)return;
   if(e.code==='Space'){if(e.target.closest('button,a,summary'))return;e.preventDefault();spaceDown=true;canvas.style.cursor='grab';return;}
   if(mod)return;
@@ -892,11 +986,13 @@ $('#modal').addEventListener('click',e=>{if(e.target===$('#modal')){const r=$('#
 $('#new-map').onclick=()=>openModal(`${modalHead('New map')}<p class="modal-intro">Start fresh or make one of these maps your own. Your current map stays available with Undo. Export JSON to keep a separate copy.</p><div class="template-list">${templates.map(t=>`<button class="template-card" data-template="${t.id}"><span class="template-preview"><svg viewBox="0 0 80 50" fill="none"><path d="M4 30h25L49 10h27" stroke="${t.id==='product'?'#70A8FF':'#4068E8'}" stroke-width="4"/><path d="M15 5v10l30 30h30" stroke="#E89A38" stroke-width="4"/><path d="M40 3v44" stroke="#469B79" stroke-width="4"/><g fill="#f1f4e9" stroke="#526843" stroke-width="2"><circle cx="15" cy="30" r="3"/><circle cx="40" cy="19" r="4"/><circle cx="65" cy="10" r="3"/></g></svg></span><span><small>${esc(t.tag)}</small><br><strong>${esc(t.title)}</strong><p>${esc(t.description)}</p></span></button>`).join('')}</div><div class="modal-footer">Already have a map?<button class="button outlined" data-action="import">${icon('file')} Import JSON</button></div>`);
 function loadTemplate(tid){const t=templates.find(t=>t.id===tid);if(!t)return;disconnectProjectFile();commit(()=>{map=validateMap(t.create());selection=null;activeLineId=null;drawing=false;});setTool('select');$('#modal').close();fitMap();notify(tid==='blank'?'A fresh start. Press L to draw your first line.':'Your new map is ready to make your own.');}
 $('#rename-map').onclick=()=>{
-  openModal(`${modalHead('Map details')}<form id="map-form"><div class="field"><label for="map-name-input">Map title</label><input class="input" id="map-name-input" maxlength="100" value="${esc(map.title)}" required></div><div class="field"><label for="map-subtitle-input">Subtitle</label><input class="input" id="map-subtitle-input" maxlength="200" value="${esc(map.subtitle)}"></div><button class="button primary full-width" type="submit">Save changes</button></form>`);
-  $('#map-form').onsubmit=e=>{e.preventDefault();commit(()=>{map.title=$('#map-name-input').value.trim()||'Untitled map';map.subtitle=$('#map-subtitle-input').value.trim();});$('#modal').close();};
+  if(drawing)finishLine(false);
+  setSelection(null);panels.right=true;
+  if(!wideLayout())panels.left=false;
+  syncPanels();$('#project-title')?.focus();
 };
 $('#map-details').onclick=()=>$('#rename-map').click();
-$('#help').onclick=()=>openModal(`${modalHead('Help & shortcuts')}<p class="modal-intro">Draw a line by clicking to place stops. The route automatically follows metro-style angles. Click an existing stop to connect lines; drag one stop onto another to merge them.</p><div class="shortcut-list">${[['Select & move','V'],['New line','L'],['Insert a stop','S'],['Pan the canvas','H / Space'],['Finish a line','Enter'],['Select multiple items','Shift + click'],['Place a route bend','Shift + click while drawing'],['Fit the whole map','F'],['Zoom the map','Ctrl/Cmd + / −'],['Lines panel','['],['Properties panel',']'],['Fullscreen','\\'],['Undo / redo','⌘Z / ⌘⇧Z'],['Remove selection','Delete'],['Cancel / exit','Esc']].map(([t,k])=>`<div class="shortcut-item"><span>${t}</span><kbd>${k}</kbd></div>`).join('')}</div><div class="onboard-note">Drag a selected line’s diamond handles, or drag any segment, to reshape the route locally. Double-click a bend to remove it; double-click the route itself to insert a station. Use <strong>Continue this line</strong> to extend a selected route. In presentation mode, clicking a station opens its story. Your map is saved on this browser; export JSON to back it up or continue on another device.</div>`);
+$('#help').onclick=()=>openModal(`${modalHead('Help & shortcuts')}<p class="modal-intro">Draw a line by clicking to place stops. The route automatically follows metro-style angles. Click an existing stop to connect lines; drag one stop onto another to merge them.</p><div class="shortcut-list">${[['Select & move','V'],['New line','L'],['Insert a stop','S'],['Pan the canvas','H / Space'],['Finish a line','Enter'],['Select multiple items','Shift + click'],['Place a route bend','Shift + click while drawing'],['Fit the whole map','F'],['Zoom the map','Ctrl/Cmd + / −'],['Lines panel','['],['Properties panel',']'],['Present fullscreen','\\'],['Undo / redo','⌘Z / ⌘⇧Z'],['Remove selection','Delete'],['Cancel / exit','Esc']].map(([t,k])=>`<div class="shortcut-item"><span>${t}</span><kbd>${k}</kbd></div>`).join('')}</div><div class="onboard-note">Drag a selected line’s diamond handles, or drag any segment, to reshape the route locally. Double-click a bend to remove it; double-click the route itself to insert a station. Use <strong>Continue this line</strong> to extend a selected route. In presentation mode, clicking a station opens its story. Your map is saved on this browser; export JSON to back it up or continue on another device.</div>`);
 $('#export').onclick=()=>openModal(`${modalHead('Export map')}<p class="modal-intro">Take your map with you. Export a crisp vector graphic or save an editable copy of the whole network.</p><div class="export-options"><button class="export-option" data-action="export-svg">${icon('export')}<strong>Export SVG</strong><p>A sharp, scalable map for documents, slides, and print.</p><span class="keycap">VECTOR IMAGE</span></button><button class="export-option" data-action="export-json">${icon('file')}<strong>Save map file</strong><p>Keep all your lines, stops, and stories. Reopen it in Pointwise.</p><span class="keycap">EDITABLE JSON</span></button></div><div class="modal-footer">Bring a saved map back into the studio.<button class="button outlined" data-action="import">Import JSON</button></div>`);
 function filename(ext){return `${map.title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'pointwise-map'}.${ext}`;}
 function download(data,type,name){const url=URL.createObjectURL(new Blob([data],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);}

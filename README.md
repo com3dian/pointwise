@@ -17,7 +17,9 @@ python3 -m http.server 8080 --directory dist
 
 Open [localhost:8080](http://localhost:8080). The app uses browser-native JavaScript modules, so opening `index.html` directly from the filesystem is not supported.
 
-Use the header's **Lines** and **Properties** panel buttons to show or hide either sidebar independently, or press `[` and `]`. **Fullscreen** (`\`) fills the screen and hides both panels; exit fullscreen to restore your workspace. Drawing tools, undo/redo, and zoom share one floating bottom toolbar. The canvas fills the window behind compact corner controls. New routes use a 6-unit stroke. Panel preferences are remembered in this browser. Open Canvas → Map details in the Lines panel to rename the map. Station properties are split into Style and Content tabs.
+Use the header's **Lines** and **Properties** panel buttons to show or hide either sidebar independently, or press `[` and `]`. **Present fullscreen** (`\`) opens a read-only presentation; click stops to read their descriptions. Exit presentation to restore your workspace. Drawing tools, undo/redo, and zoom share one floating bottom toolbar. The canvas fills the window behind compact corner controls. New routes use a 6-unit stroke. Panel preferences are remembered in this browser. Both panels share compact typography and 36-pixel rows, with larger touch targets on touch devices. Station properties are split into Style and Content tabs.
+
+When nothing is selected, the Properties panel shows editable **Project title** and **Subtitle** fields and a line/stop count. Click empty canvas, press Escape, or close the selected item's details to return to project information. **Canvas → Project info** in the Lines panel opens the same editor and reveals the Properties panel if needed. Project edits save automatically using the existing browser/file autosave and support Undo, JSON backups, and SVG export.
 
 ## Working with a map
 
@@ -33,6 +35,14 @@ Use the header's **Lines** and **Properties** panel buttons to show or hide eith
 The app saves your current map in local browser storage. This storage belongs to the current browser and site origin; it does not synchronize between devices. Export a JSON file to keep a portable, editable backup, then import it when you want to continue elsewhere. SVG export produces a scalable drawing for sharing or further visual editing.
 
 The included templates are examples of conceptual flowcharts, not real transport maps.
+
+## Presentation and Markdown descriptions
+
+Select a stop and open **Content → Description** to write Markdown. Expand **Preview** to see the formatting as you type. Headings, bold/italic text, lists, task lists, links, blockquotes, tables, inline code, and fenced code blocks are supported. Descriptions are retained in browser recovery saves and JSON projects.
+
+Click the fullscreen icon or press `\` to present. Editing panels, drawing tools, route handles, and edit shortcuts are disabled. Click a stop or its name to read its description in a card above the stop; near the top edge the card moves below to stay visible. Close the card with its × button or click elsewhere on the canvas. Drag empty canvas or a route to pan, scroll or use Ctrl/Cmd +/− to zoom, and press F to fit the map. **Exit presentation**, Escape, or leaving native fullscreen restores your panels, selection, camera, inspector tab, and scroll position. If native fullscreen is unavailable, the same read-only presentation uses the browser window.
+
+Markdown is rendered with a bundled copy of [Marked](https://marked.js.org/), pinned to version 18.1.3, so no CDN or installation is needed. Its MIT license is included in `dist/vendor/marked.LICENSE.md` and the standalone HTML. Raw HTML is displayed as text; Markdown images are shown as explicit links.
 
 ## Corners and station symbols
 
