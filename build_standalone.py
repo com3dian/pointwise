@@ -16,7 +16,8 @@ def module(filename, exports):
 
 script = module("geometry.js", ["snapPoint", "routePoints", "roundedPath", "nearestOnLine", "getBounds"])
 script += module("symbols.js", ["SYMBOL_TYPES", "normalizeSymbol", "normalizeSymbolColors", "renderStationSymbol", "symbolExtent", "normalizeCrossArms", "resolveCrossArms"])
-script += module("labels.js", ["TEXT_DEFAULTS", "normalizeTextStyle", "labelUsesDefaults", "effectiveLabel", "labelFont", "labelLayout", "moveLabelOffset"])
+script += module("labels.js", ["TEXT_DEFAULTS", "normalizeTextStyle", "labelUsesDefaults", "effectiveLabel", "labelFont", "labelLayout", "labelCapsuleBounds", "moveLabelOffset"])
+script += module("shortcuts.js", ["mapZoomShortcut"])
 script += module("styles.js", ["DEFAULT_STYLES", "LINE_STYLES", "CORNER_STYLES", "normalizeDefaults", "effectiveLine", "effectiveNode", "lineUsesDefaults", "crossUsesDefaults"])
 script += module("strokes.js", ["renderLineStroke", "lineStrokeExtent"])
 script += module("movement.js", ["routeEditHandles", "beginRoutePointEdit", "moveRoutePoint"])
@@ -27,6 +28,7 @@ script += module("export.js", ["buildSVG"])
 script += module("project-file.js", ["JSONFileAutosave", "rememberProjectFile", "recallProjectFile"])
 script += module("extension.js", ["lineEndpoint", "extensionAnchor", "appendRouteStop"])
 script += module("deletion.js", ["removeMapItem", "repairEmptyRoutes"])
+script += module("multiselect.js", ["selectionItems", "selectionKey", "isSelected", "toggleSelection", "selectedRecords", "batchStyleValue", "applyBatchStyle"])
 script += re.sub(r"^import .*?;\n", "", (DIST / "app.js").read_text(), flags=re.MULTILINE)
 # Escaping closing tags keeps all source inside its intended HTML element.
 script = script.replace("</script", "<\\/script")

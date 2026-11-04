@@ -25,6 +25,7 @@ Use the header's **Lines** and **Properties** panel buttons to show or hide eith
 - Use the line tool to draw a route. Click to place stops; connect to an existing station to create an interchange. Finish the route with Enter or Escape.
 - Use the stop tool to add a station to an existing route.
 - Select stations and drag them to rearrange the map. Route geometry follows metro-style horizontal, vertical, and diagonal segments.
+- Hold **Shift** and click stops or lines to add/remove them from a selection. This also works in the Lines panel. Use the right panel to change selected stops' text/symbols or selected lines' colors, patterns, weight and corners together. Differing properties show **Mixed**; editing one leaves other properties unchanged. Each batch change is one Undo step. Click normally to select one item, or press Escape to clear the selection. While drawing, Shift-click still places a route bend.
 - Select a station to edit its name and information in the inspector. Select a line to edit its appearance.
 - Pan and zoom to move around the canvas. Use undo and redo to revisit recent edits.
 - Use presentation mode to explore the map and its station information.
@@ -60,6 +61,10 @@ The bottom toolbar contains selection, line and stop tools; pan by dragging empt
 Select a stop, then use **Style → Text** to change typeface, size, weight, angle, alignment and gap. **45° from stop** starts the name just outside the symbol and extends it diagonally. **Name position** sets a side of the stop; **Offset X/Y** makes precise adjustments. Drag the name itself to move only the text. Drag the symbol to move the stop with its name; the relative offset is retained. Arrow keys nudge a focused name, with Shift for fine movement. Reset name position clears the offsets.
 
 **Global style → Stop names** sets shared typography. Editing a stop creates a local text override; enable **Use global text style** to relink it. **Apply text style to every stop** clears text-style overrides while preserving individual offsets and names. Typography and placement support Undo, browser saves, JSON files and SVG exports.
+
+Under **Text → Name shape**, choose **Capsule** to put a rounded background around a stop name. Adjust its fill, outline, padding, and border width using the shared color palette and property fields. Auto fill follows the map background; Auto outline follows the text color. The capsule rotates and drags with the name, without moving the station. This setting is available locally, for Shift-selected stops, and under **Global style → Stop names**; it is included in JSON saves and SVG exports.
+
+**Ctrl/Cmd +** (or **Ctrl/Cmd =**) and **Ctrl/Cmd −** zoom the map using the bottom toolbar's zoom steps, keeping the interface at its current size. The shortcuts also work while a property field is focused.
 
 ## Autosave to a JSON project file
 

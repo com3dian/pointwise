@@ -1,4 +1,4 @@
-import { effectiveLabel, labelFont, labelLayout } from './labels.js';
+import { effectiveLabel, labelFont, labelLayout, labelCapsuleBounds } from './labels.js';
 import { routePoints, roundedPath } from './geometry.js';
 import { renderStationSymbol, symbolExtent } from './symbols.js';
 import { stationDirections } from './topology.js';
@@ -40,12 +40,16 @@ function textWidth(text, size, weight = 500, family = 'sans') {
 function labelCorners(node, position, size) {
   const width = textWidth(node.name || '', size,node.labelWeight,node.labelFontFamily);
   const left = position.x - (position.anchor === 'middle' ? width / 2 : position.anchor === 'end' ? width : 0);
-  const corners = [
+  let corners = [
     { x: left - 4, y: position.y - size - 4 },
     { x: left + width + 4, y: position.y - size - 4 },
     { x: left - 4, y: position.y + size * 0.4 + 4 },
     { x: left + width + 4, y: position.y + size * 0.4 + 4 },
   ];
+  if(node.labelShape==='capsule') {
+    const box=labelCapsuleBounds(node,position),edge=node.labelBorderWidth/2+4;
+    corners=[{x:box.x-edge,y:box.y-edge},{x:box.x+box.width+edge,y:box.y-edge},{x:box.x-edge,y:box.y+box.height+edge},{x:box.x+box.width+edge,y:box.y+box.height+edge}];
+  }
   if (!node.labelAngle) return corners;
   const angle = node.labelAngle*Math.PI / 180;
   return corners.map((point) => {
@@ -141,7 +145,11 @@ export function buildSVG(map) {
     const directions = directionsFor(node);
     const position = labelLayout(node, interchange, directions);
     const symbol = renderStationSymbol(node, { colors: members.length ? members.map(color) : [mono ? ink : '#627953'], ink, paper: background, interchange, directions });
-    return `<g data-station-id="${xml(node.id)}">${symbol}<text x="${number(position.x)}" y="${number(position.y)}" text-anchor="${position.anchor}" font-family="${labelFont(node.labelFontFamily)}" font-size="${node.labelFontSize}" font-weight="${node.labelWeight}" fill="${node.labelColor==='auto'?ink:node.labelColor}" stroke="${background}" stroke-width="5" stroke-linejoin="round" paint-order="stroke"${node.labelAngle ? ` transform="rotate(${node.labelAngle} ${number(position.x)} ${number(position.y)})"` : ''}>${xml(node.name)}</text></g>`;
+    const transform=node.labelAngle?` transform="rotate(${node.labelAngle} ${number(position.x)} ${number(position.y)})"`:'';
+    const textColor=node.labelColor==='auto'?ink:node.labelColor;
+    const box=labelCapsuleBounds(node,position),capsule=node.labelShape==='capsule';
+    const badge=capsule?`<rect class="label-capsule" x="${number(box.x)}" y="${number(box.y)}" width="${number(box.width)}" height="${number(box.height)}" rx="${number(box.height/2)}" fill="${node.labelFillColor==='auto'?background:node.labelFillColor}" stroke="${node.labelBorderColor==='auto'?textColor:node.labelBorderColor}" stroke-width="${node.labelBorderWidth}"${transform}/>`:'';
+    return `<g data-station-id="${xml(node.id)}">${symbol}${badge}<text x="${number(position.x)}" y="${number(position.y)}" text-anchor="${position.anchor}" font-family="${labelFont(node.labelFontFamily)}" font-size="${node.labelFontSize}" font-weight="${node.labelWeight}" fill="${textColor}" stroke="${capsule?'none':background}" stroke-width="5" stroke-linejoin="round" paint-order="stroke"${transform}>${xml(node.name)}</text></g>`;
   }).join('');
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"><title>${xml(title)}</title><desc>${xml(subtitle)}</desc><rect width="${width}" height="${height}" fill="${background}"/><text x="${margin}" y="72" font-family="Arial, sans-serif" font-size="48" font-weight="700" fill="${ink}">${xml(title)}</text>${subtitle ? `<text x="${margin}" y="110" font-family="Arial, sans-serif" font-size="21" fill="${ink}" opacity=".7">${xml(subtitle)}</text>` : ''}<g class="map-content" transform="translate(${number(offsetX)} ${number(offsetY)})">${routes}${stops}</g>${legendMarkup}</svg>`;

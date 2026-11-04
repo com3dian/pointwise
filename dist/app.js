@@ -1,7 +1,8 @@
 import { lineEndpoint, extensionAnchor, appendRouteStop } from './extension.js';
 import { JSONFileAutosave, rememberProjectFile, recallProjectFile } from './project-file.js';
 import { removeMapItem, repairEmptyRoutes } from './deletion.js';
-import { normalizeTextStyle, labelUsesDefaults, effectiveLabel, labelFont, labelLayout, moveLabelOffset } from './labels.js';
+import { normalizeTextStyle, labelUsesDefaults, effectiveLabel, labelFont, labelLayout, labelCapsuleBounds, moveLabelOffset } from './labels.js';
+import { mapZoomShortcut } from './shortcuts.js';
 import { snapPoint, routePoints, roundedPath, nearestOnLine, getBounds } from './geometry.js';
 import { templates } from './templates.js';
 import { buildSVG } from './export.js';
@@ -11,6 +12,7 @@ import { validateMap } from './model.js';
 import { DEFAULT_STYLES, LINE_STYLES, CORNER_STYLES, normalizeDefaults, effectiveLine, effectiveNode, lineUsesDefaults, crossUsesDefaults } from './styles.js';
 import { renderLineStroke } from './strokes.js';
 import { routeEditHandles, beginRoutePointEdit, moveRoutePoint } from './movement.js';
+import { selectionItems, selectionKey, isSelected, toggleSelection, selectedRecords, batchStyleValue, applyBatchStyle } from './multiselect.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -146,9 +148,10 @@ document.addEventListener('fullscreenchange',()=>{
   else if(fullscreenPanels){panels=fullscreenPanels;fullscreenPanels=null;}
   syncPanels();
 });
-function setSelection(type, nid, pointId=null) {
+function setSelection(type, nid, pointId=null, additive=false) {
   closeColorPalette();
-  activeRoutePointId=pointId;selection=type?{type,id:nid}:null;
+  activeRoutePointId=pointId;
+  selection=type?(additive?toggleSelection(selection,{type,id:nid}):{type,id:nid}):null;
   if(type==='line')activeLineId=nid;
   if(presenting){panels.right=!!type;syncPanels();}
   else if(type&&!wideLayout()&&panels.left){panels.left=false;panels.right=true;syncPanels();}
@@ -165,7 +168,7 @@ function render(inspector=true) {
   renderLines(); renderMap(); if(inspector) renderInspector(); updateHint(); refreshGlobalPreview();
 }
 function renderLines() {
-  $('#line-list').innerHTML=map.lines.map(l=>`<div class="line-row ${selection?.id===l.id?'selected':''} ${!l.visible?'hidden-line':''}" data-select-line="${esc(l.id)}" role="button" tabindex="0" aria-label="Edit ${esc(l.name)} line"><span class="line-code" style="--line-color:${l.color}">${esc(l.code)}</span><span class="line-info"><span class="line-name">${esc(l.name)}</span><span class="line-stats">${lineNodes(l).filter(n=>n.kind!=='bend').length} stops</span></span><button class="line-eye" data-toggle-line="${esc(l.id)}" aria-label="${l.visible?'Hide':'Show'} ${esc(l.name)}" title="${l.visible?'Hide':'Show'} line">${icon('eye')}</button></div>`).join('');
+  $('#line-list').innerHTML=map.lines.map(l=>`<div class="line-row ${isSelected(selection,'line',l.id)?'selected':''} ${!l.visible?'hidden-line':''}" data-select-line="${esc(l.id)}" role="button" tabindex="0" aria-pressed="${isSelected(selection,'line',l.id)}" aria-label="Edit ${esc(l.name)} line"><span class="line-code" style="--line-color:${l.color}">${esc(l.code)}</span><span class="line-info"><span class="line-name">${esc(l.name)}</span><span class="line-stats">${lineNodes(l).filter(n=>n.kind!=='bend').length} stops</span></span><button class="line-eye" data-toggle-line="${esc(l.id)}" aria-label="${l.visible?'Hide':'Show'} ${esc(l.name)}" title="${l.visible?'Hide':'Show'} line">${icon('eye')}</button></div>`).join('');
   $('#map-legend').innerHTML=visualLines().map(l=>`<span class="legend-item"><svg viewBox="0 0 26 12" aria-hidden="true">${renderLineStroke('M2 6H24',{...l,width:4},{color:map.theme==='night'?'#aaaaaa':'#888888',paper:paperColor()})}</svg>${esc(l.code)} &nbsp;${esc(l.name)}</span>`).join('');
 }
 function linePath(line) {
@@ -207,7 +210,7 @@ function removeActiveRoutePoint() {
 }
 function renderMap() {
   $('#route-layer').innerHTML=visualLines().map(l=>{
-    const d=linePath(l), selected=selection?.type==='line'&&selection.id===l.id;
+    const d=linePath(l), selected=isSelected(selection,'line',l.id);
     const dim=presenting&&selection?.type==='line'&&!selected;
     return `<g class="line-group" data-line="${esc(l.id)}" opacity="${dim ? 0.25 : 1}">${selected?`<path class="route-selection" style="stroke-width:${l.width+10}" d="${d}" stroke="${l.color}"/>`:''}${renderLineStroke(d,l,{color:map.theme==='mono'?'#30382e':l.color,paper:paperColor()})}<path class="route-hit" data-line-id="${esc(l.id)}" d="${d}"/></g>`;
   }).join('');
@@ -215,14 +218,18 @@ function renderMap() {
     const n=effectiveLabel(map,effectiveNode(map,raw));
     const all=nodeLines(n.id), member=all.filter(l=>l.visible);
     if(all.length && !member.length)return '';
-    const selected=selection?.type==='node'&&selection.id===n.id;
+    const selected=isSelected(selection,'node',n.id);
     if(n.kind==='bend')return !presenting&&selected?`<g data-node-id="${esc(n.id)}"><circle class="station-hit" cx="${n.x}" cy="${n.y}" r="15"/><rect class="bend-handle" x="${n.x-4}" y="${n.y-4}" width="8" height="8" stroke="${colorForNode(n.id)}"/></g>`:'';
     const interchange=member.length>1, color=colorForNode(n.id);
     const directions=n.symbol==='cross'?stationDirections(map,n.id):[];
     const extent=symbolExtent(n,interchange,directions);
     const symbol=renderStationSymbol(n,{directions,colors:member.length?member.map(l=>map.theme==='mono'?'#30382e':l.color):['#627953'],interchange,ink:map.theme==='night'?'#e3eadc':'#344038',paper:map.theme==='night'?'#1e2925':map.theme==='mono'?'#fbfaf6':'#f8f9f5'});
     const {x,y,anchor}=labelCoordinates(n);
-    return `<g class="station-group ${selected?'selected':''}" data-node-id="${esc(n.id)}" role="button" tabindex="0" aria-label="${esc(n.name)}, ${member.length>1?'interchange, ':''}${esc(member.map(l=>l.name).join(', '))}"><circle class="station-hit" cx="${n.x}" cy="${n.y}" r="${Math.max(17,extent+5)}"/>${selected?`<circle class="station-ring" cx="${n.x}" cy="${n.y}" r="${extent+6}" stroke="${color}"/>`:''}${symbol}<text class="station-label" data-label-node="${esc(n.id)}" tabindex="0" aria-label="Move name: ${esc(n.name)}" style="font-size:${n.labelFontSize}px;font-family:${labelFont(n.labelFontFamily)};font-weight:${n.labelWeight};fill:${n.labelColor==='auto'?'var(--label)':n.labelColor}" x="${x}" y="${y}" text-anchor="${anchor}" ${n.labelAngle?`transform="rotate(${n.labelAngle} ${x} ${y})"`:''}>${esc(n.name)}</text></g>`;
+    const transform=n.labelAngle?`transform="rotate(${n.labelAngle} ${x} ${y})"`:'';
+    const textColor=n.labelColor==='auto'?'var(--label)':n.labelColor;
+    const box=labelCapsuleBounds(n,{x,y,anchor}),capsule=n.labelShape==='capsule';
+    const badge=capsule?`<rect class="station-label-capsule" data-label-capsule="${esc(n.id)}" x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="${box.height/2}" fill="${n.labelFillColor==='auto'?paperColor():n.labelFillColor}" stroke="${n.labelBorderColor==='auto'?textColor:n.labelBorderColor}" stroke-width="${n.labelBorderWidth}" ${transform}/>`:'';
+    return `<g class="station-group ${selected?'selected':''}" data-node-id="${esc(n.id)}" role="button" tabindex="0" aria-pressed="${selected}" aria-label="${esc(n.name)}, ${member.length>1?'interchange, ':''}${esc(member.map(l=>l.name).join(', '))}"><circle class="station-hit" cx="${n.x}" cy="${n.y}" r="${Math.max(17,extent+5)}"/>${selected?`<circle class="station-ring" cx="${n.x}" cy="${n.y}" r="${extent+6}" stroke="${color}"/>`:''}${symbol}${badge}<text class="station-label" data-label-node="${esc(n.id)}" tabindex="0" aria-label="Move name: ${esc(n.name)}" style="font-size:${n.labelFontSize}px;font-family:${labelFont(n.labelFontFamily)};font-weight:${n.labelWeight};fill:${textColor};${capsule?'stroke:none;':''}" x="${x}" y="${y}" text-anchor="${anchor}" ${transform}>${esc(n.name)}</text></g>`;
   }).join('');
   renderRouteHandles();renderEndpointActions();
 }
@@ -248,10 +255,13 @@ function crossControls(n) {
   const automatic=n.symbolCrossMode!=='manual', arms=automatic?resolveCrossArms(n,stationDirections(map,n.id)):normalizeCrossArms(n.symbolCrossArms);
   return `<div class="cross-controls"><div class="field"><label for="cross-mode">Cross arms</label><select id="cross-mode" data-node-field="symbolCrossMode"><option value="auto" ${automatic?'selected':''}>Follow connected lines</option><option value="manual" ${!automatic?'selected':''}>Adjust arms individually</option></select></div>${automatic?`<div class="cross-direction-chips" aria-label="Detected line directions">${arms.map(arm=>`<span>${Math.round(arm.angle)}°</span>`).join('')}</div><p class="control-help">Each arm follows a route entering this stop. Adjust the overall rotation above, or customize individual arms.</p><button class="button outlined full-width" data-action="customize-cross">Adjust these arms</button>`:`<div class="cross-arms"><div class="cross-arms-heading"><span>Arm</span><span>Angle °</span><span>Length</span><span></span></div>${arms.map((arm,i)=>`<div class="cross-arm-row"><span class="cross-arm-number">${i+1}</span><input type="number" aria-label="Arm ${i+1} angle" data-cross-index="${i}" data-cross-field="angle" min="-180" max="180" step="any" value="${arm.angle}"><input type="number" aria-label="Arm ${i+1} length" data-cross-index="${i}" data-cross-field="length" min="6" max="60" step="1" value="${arm.length}"><button class="icon-button" data-remove-arm="${i}" title="Remove arm ${i+1}" aria-label="Remove arm ${i+1}" ${arms.length<=2?'disabled':''}>${icon('close')}</button></div>`).join('')}</div><div class="cross-arm-actions"><button class="button outlined" data-action="add-cross-arm" ${arms.length>=8?'disabled':''}>${icon('plus')} Add arm</button><button class="text-button" data-action="follow-cross">Match lines again</button></div><p class="control-help">Angles are measured before the overall rotation. Change each arm’s angle and length to fit the crossing.</p>`}</div>`;
 }
-function colorControl(label,key,value,scope='node',reset=false) {
-  const automatic=value==='auto',hex=automatic?(map.theme==='night'?'#e3eadc':'#344038'):value;
+function automaticLabelColor(key,style={}) {
+  return key==='labelFillColor'?paperColor():key==='labelBorderColor'&&style.labelColor&&style.labelColor!=='auto'?style.labelColor:map.theme==='night'?'#e3eadc':'#344038';
+}
+function colorControl(label,key,value,scope='node',reset=false,autoColor=automaticLabelColor(key)) {
+  const automatic=value==='auto',hex=automatic?autoColor:value;
   const id=`${scope}-${key}`;
-  return `<div class="field color-field"><label for="${id}">${label}</label><div class="paint-controls"><button type="button" id="${id}-picker" class="paint-palette-trigger" data-palette-scope="${scope}" data-palette-field="${key}" data-paint-preview="${id}" style="--paint-color:${hex}" aria-label="${label} palette" aria-expanded="false" title="Choose ${label.toLowerCase()}"><span class="paint-chip"></span></button><input class="input" id="${id}" data-${scope}-field="${key}" value="${hex}" maxlength="7" pattern="#[0-9a-fA-F]{6}" aria-label="${label} hex">${reset?`<button class="color-reset ${automatic?'active':''}" data-reset-text-color="${scope}" aria-label="Use map ink for text color" aria-pressed="${automatic}">Auto</button>`:''}</div></div>`;
+  return `<div class="field color-field"><label for="${id}">${label}</label><div class="paint-controls"><button type="button" id="${id}-picker" class="paint-palette-trigger" data-palette-scope="${scope}" data-palette-field="${key}" data-paint-preview="${id}" style="--paint-color:${hex}" aria-label="${label} palette" aria-expanded="false" title="Choose ${label.toLowerCase()}"><span class="paint-chip"></span></button><input class="input" id="${id}" data-${scope}-field="${key}" value="${hex}" maxlength="7" pattern="#[0-9a-fA-F]{6}" aria-label="${label} hex">${reset?`<button class="color-reset ${automatic?'active':''}" data-reset-text-color="${scope}" data-reset-label-color="${key}" aria-label="Use automatic ${label.toLowerCase()}" aria-pressed="${automatic}">Auto</button>`:''}</div></div>`;
 }
 function closeColorPalette(){
   const popover=$('#color-popover');if(!popover)return;
@@ -265,7 +275,8 @@ function openColorPalette(button){
   closeColorPalette();if(same)return;
   const input=$(`#${scope}-${key}`);if(!input)return;
   paletteTarget={scope,key,id:scope==='node'?selectedNode()?.id:scope==='line'?selectedLine()?.id:null};
-  const color=input.value,popover=$('#color-popover');
+  const color=/^#[0-9a-f]{6}$/i.test(input.value)?input.value:'#344038',popover=$('#color-popover');
+  paletteTarget.selectionKey=selectionKey(selection);
   (button.closest('dialog')||document.body).appendChild(popover);
   popover.innerHTML=`<div class="color-popover-heading">Colors</div><div class="shared-palette" role="group" aria-label="Shared metro palette">${colorPalette.map(hex=>`<button type="button" class="palette-swatch" data-palette-color="${hex}" style="--swatch:${hex}" aria-label="Set color ${hex}" aria-pressed="${hex.toLowerCase()===color.toLowerCase()}"></button>`).join('')}</div><label class="palette-custom">Custom color<input type="color" data-palette-custom value="${color}" aria-label="Custom color"></label>`;
   popover.hidden=false;popover.dataset.open='true';
@@ -279,6 +290,7 @@ function openColorPalette(button){
 }
 function choosePaletteColor(color,close=true){
   const target=paletteTarget;if(!target||!/^#[0-9a-f]{6}$/i.test(color))return;
+  if(target.scope.startsWith('batch-')&&target.selectionKey!==selectionKey(selection)){closeColorPalette();return;}
   if(target.scope==='node'&&selectedNode()?.id!==target.id||target.scope==='line'&&selectedLine()?.id!==target.id){closeColorPalette();return;}
   const input=$(`#${target.scope}-${target.key}`);if(!input){closeColorPalette();return;}
   if(!target.changed){editingField={target:input,changed:false};target.changed=true;}input.value=color;input.dispatchEvent(new Event('input',{bubbles:true}));
@@ -310,7 +322,16 @@ function makeTextCustom(node){Object.assign(node,normalizeTextStyle(effectiveLab
 function textStyleControls(node,global=false){
   const n=global?normalizeDefaults(map.defaults):effectiveLabel(map,node),scope=global?'default':'node';
   const number=(key,label,min,max,step=1)=>`<div class="field"><label for="${scope}-${key}">${label}</label><input class="input" id="${scope}-${key}" type="number" min="${min}" max="${max}" step="${step}" value="${n[key]}" data-${scope}-field="${key}"></div>`;
-  return `<div class="text-style-controls">${global?'':`<label class="inherit-toggle"><input type="checkbox" id="inherit-text" ${labelUsesDefaults(node)?'checked':''}> Use global text style</label>`}${colorControl('Text color','labelColor',n.labelColor,scope,true)}<div class="preset-row"><button data-text-preset="horizontal" data-text-scope="${scope}">Horizontal</button><button data-text-preset="diagonal" data-text-scope="${scope}">45° from stop</button></div><div class="field-pair">${number('labelFontSize','Text size',10,96)}${selectControl('Weight','labelWeight',[{id:400,label:'Regular'},{id:500,label:'Medium'},{id:600,label:'Semibold'},{id:700,label:'Bold'}],n.labelWeight,scope)}</div>${selectControl('Typeface','labelFontFamily',[{id:'sans',label:'Sans serif'},{id:'serif',label:'Serif'},{id:'mono',label:'Monospace'}],n.labelFontFamily,scope)}<div class="field-pair">${number('labelAngle','Text angle °',-180,180)}${selectControl('Alignment','labelAnchor',[{id:'auto',label:'Auto'},{id:'start',label:'Start'},{id:'middle',label:'Center'},{id:'end',label:'End'}],n.labelAnchor,scope)}</div><div class="field-pair">${selectControl('Attachment','labelFromStop',[{id:false,label:'Side of stop'},{id:true,label:'Start from stop'}],n.labelFromStop,scope)}${number('labelGap','Gap',0,160)}</div></div>`;
+  return `<div class="text-style-controls">${global?'':`<label class="inherit-toggle"><input type="checkbox" id="inherit-text" ${labelUsesDefaults(node)?'checked':''}> Use global text style</label>`}${selectControl('Name shape','labelShape',[{id:'plain',label:'Plain text'},{id:'capsule',label:'Capsule'}],n.labelShape,scope)}${colorControl('Text color','labelColor',n.labelColor,scope,true)}<div class="capsule-text-controls" data-capsule-controls="${scope}" ${n.labelShape!=='capsule'?'hidden':''}>${colorControl('Capsule fill','labelFillColor',n.labelFillColor,scope,true)}${colorControl('Capsule outline','labelBorderColor',n.labelBorderColor,scope,true,automaticLabelColor('labelBorderColor',n))}<div class="field-pair">${number('labelPadding','Padding',0,40,.5)}${number('labelBorderWidth','Border width',0,8,.5)}</div></div><div class="preset-row"><button data-text-preset="horizontal" data-text-scope="${scope}">Horizontal</button><button data-text-preset="diagonal" data-text-scope="${scope}">45° from stop</button></div><div class="field-pair">${number('labelFontSize','Text size',10,96)}${selectControl('Weight','labelWeight',[{id:400,label:'Regular'},{id:500,label:'Medium'},{id:600,label:'Semibold'},{id:700,label:'Bold'}],n.labelWeight,scope)}</div>${selectControl('Typeface','labelFontFamily',[{id:'sans',label:'Sans serif'},{id:'serif',label:'Serif'},{id:'mono',label:'Monospace'}],n.labelFontFamily,scope)}<div class="field-pair">${number('labelAngle','Text angle °',-180,180)}${selectControl('Alignment','labelAnchor',[{id:'auto',label:'Auto'},{id:'start',label:'Start'},{id:'middle',label:'Center'},{id:'end',label:'End'}],n.labelAnchor,scope)}</div><div class="field-pair">${selectControl('Attachment','labelFromStop',[{id:false,label:'Side of stop'},{id:true,label:'Start from stop'}],n.labelFromStop,scope)}${number('labelGap','Gap',0,160)}</div></div>`;
+}
+function syncLabelPaintControls(scope,style) {
+  for(const key of ['labelColor','labelFillColor','labelBorderColor']) {
+    const automatic=style[key]==='auto',color=automatic?automaticLabelColor(key,style):style[key];
+    const input=$(`#${scope}-${key}`);if(input&&input!==document.activeElement)input.value=color;
+    const preview=$(`[data-paint-preview="${scope}-${key}"]`);if(preview)preview.style.setProperty('--paint-color',color);
+    $$(`[data-reset-text-color="${scope}"][data-reset-label-color="${key}"]`).forEach(button=>{button.classList.toggle('active',automatic);button.setAttribute('aria-pressed',String(automatic));});
+  }
+  $$(`[data-capsule-controls="${scope}"]`).forEach(el=>el.hidden=style.labelShape!=='capsule');
 }
 function labelPlacementControls(n){
   return `<div class="label-placement"><div class="field">${selectControl('Name position','labelPosition',['top','right','bottom','left'].map(id=>({id,label:id[0].toUpperCase()+id.slice(1)})),n.labelPosition,'node')}</div><div class="field-pair">${['X','Y'].map(axis=>`<div class="field"><label for="label-offset-${axis}">Offset ${axis}</label><input class="input" id="label-offset-${axis}" type="number" min="-2000" max="2000" step="0.1" data-node-field="labelOffset${axis}" value="${n['labelOffset'+axis]||0}"></div>`).join('')}</div><button class="button outlined full-width" data-action="reset-label-position">Reset name position</button><p class="label-drag-hint">Drag the name to place it. Its offset stays attached to the stop.</p></div>`;
@@ -334,9 +355,9 @@ function refreshGlobalPreview() {
   const node=effectiveNode(map,{symbol:'cross',x:0,y:0,crossStyleMode:'global'});
   const rays=d.routing==='orthogonal'?[0,90,180,-90]:[0,45,180,-135];
   host.innerHTML=`<div><svg viewBox="0 0 300 105" aria-label="Route style preview">${renderLineStroke(path,line,{color:'#777777',paper:'#ffffff'})}</svg><span>Route preview</span></div><div><svg viewBox="-130 -120 260 240" aria-label="Cross style preview"><path d="${d.routing==='orthogonal'?'M-120 0H120M0 -110V110':'M-120 0H120M-90 -90L90 90'}" stroke="#bdbdbd" stroke-width="8"/>${renderStationSymbol(node,{directions:rays.map(angle=>({angle})),colors:['#888888','#bbbbbb'],ink:'#333333',paper:'#ffffff',interchange:true})}</svg><span>Cross preview</span></div>`;
-  $$('#modal [data-default-field]').filter(el=>textStyleKeys.includes(el.dataset.defaultField)||['crossOutline','crossFill','crossOutlineColor','crossFillColor'].includes(el.dataset.defaultField)).forEach(el=>{if(el!==document.activeElement)el.value=el.dataset.defaultField==='labelColor'&&d.labelColor==='auto'?(map.theme==='night'?'#e3eadc':'#344038'):d[el.dataset.defaultField];});
-  $$('#modal [data-paint-preview]').forEach(button=>{const key=button.dataset.paletteField;button.style.setProperty('--paint-color',key==='labelColor'&&d.labelColor==='auto'?(map.theme==='night'?'#e3eadc':'#344038'):d[key]);});
-  $$('#modal [data-reset-text-color]').forEach(el=>{el.classList.toggle('active',d.labelColor==='auto');el.setAttribute('aria-pressed',String(d.labelColor==='auto'));});
+  $$('#modal [data-default-field]').filter(el=>textStyleKeys.includes(el.dataset.defaultField)||['crossOutline','crossFill','crossOutlineColor','crossFillColor'].includes(el.dataset.defaultField)).forEach(el=>{if(el!==document.activeElement){const key=el.dataset.defaultField;el.value=d[key]==='auto'&&key.endsWith('Color')?automaticLabelColor(key,d):d[key];}});
+  $$('#modal [data-paint-preview]').forEach(button=>{const key=button.dataset.paletteField;button.style.setProperty('--paint-color',d[key]==='auto'?automaticLabelColor(key,d):d[key]);});
+  syncLabelPaintControls('default',d);
   const counts=$('#global-style-counts');if(counts)counts.textContent=`${map.lines.filter(l=>lineUsesDefaults(map,l)).length} of ${map.lines.length} lines · ${map.nodes.filter(n=>n.symbol==='cross'&&crossUsesDefaults(map,n)).length} of ${map.nodes.filter(n=>n.symbol==='cross').length} crosses follow defaults`;
 }
 function openStyleDialog() {
@@ -345,9 +366,68 @@ function openStyleDialog() {
   $('#modal').classList.add('style-dialog');refreshGlobalPreview();
 }
 let inspectorSelectionKey='';
+function batchScope(html,type) {
+  return html.replaceAll(`data-${type}-field=`,`data-batch-${type}-field=`)
+    .replaceAll(`id="${type}-`,`id="batch-${type}-`).replaceAll(`for="${type}-`,`for="batch-${type}-`)
+    .replaceAll(`data-palette-scope="${type}"`,`data-palette-scope="batch-${type}"`)
+    .replaceAll(`data-paint-preview="${type}-`,`data-paint-preview="batch-${type}-`)
+    .replaceAll(`data-reset-text-color="${type}"`,`data-reset-text-color="batch-${type}"`)
+    .replaceAll(`data-text-scope="${type}"`,`data-text-scope="batch-${type}"`)
+    .replaceAll(`data-capsule-controls="${type}"`,`data-capsule-controls="batch-${type}"`)
+    .replaceAll('id="inherit-','id="batch-inherit-');
+}
+function batchInspector(close) {
+  const nodes=selectedRecords(map,selection,'node'),lines=selectedRecords(map,selection,'line');
+  let html=`<div class="inspector-kicker">Selection ${close}</div><h2 class="inspector-title batch-title">${selectionItems(selection).length} selected</h2><p class="batch-counts">${[nodes.length?`${nodes.length} ${nodes.length===1?'stop':'stops'}`:'',lines.length?`${lines.length} ${lines.length===1?'line':'lines'}`:''].filter(Boolean).join(' · ')}</p>`;
+  if(nodes.length) {
+    const n=effectiveNode(map,nodes[0]),config=normalizeSymbol(n);
+    const picker=`<div class="symbol-picker" role="group" aria-label="Station symbol">${SYMBOL_TYPES.map(type=>`<button type="button" class="symbol-option" data-batch-symbol="${type.id}" title="${esc(type.description)}" aria-label="${esc(type.label)} station symbol" aria-pressed="false"><svg viewBox="0 0 64 44" aria-hidden="true"><path d="M2 22h60M32 2v40" stroke="#bbbbbb" stroke-width="6"/>${renderStationSymbol({x:32,y:22,symbol:type.id,symbolLength:20,symbolSize:.8},{colors:['#888','#bbb'],ink:'#333',paper:'#fff',interchange:true})}</svg></button>`).join('')}</div>`;
+    const rotates=nodes.some(node=>!['auto','circle','disc'].includes(node.symbol));
+    const length=nodes.some(node=>['capsule','open-capsule','pill-dots','linked','linked-dots','double-circle','cross'].includes(node.symbol));
+    const crosses=nodes.some(node=>node.symbol==='cross');
+    html+=`<details class="appearance-section" data-inspector-section-key="batch-text"><summary>Stop text</summary>${batchScope(textStyleControls(nodes[0])+labelPlacementControls(nodes[0]),'node')}</details><details class="appearance-section" data-inspector-section-key="batch-station"><summary>Stop appearance</summary>${batchScope(stationPaintControls({...n,symbol:'auto'}),'node')}${picker}${rotates?batchScope(rangeControl({key:'symbolAngle',label:'Rotation',value:config.angle,min:-180,max:180,precise:true}),'node'):''}${batchScope(rangeControl({key:'symbolSize',label:'Symbol size',value:config.size,min:.6,max:3,step:.1}),'node')}${length?batchScope(rangeControl({key:'symbolLength',label:'Connector length',value:config.length,min:12,max:60,step:2}),'node'):''}${crosses?batchScope(rangeControl({key:'symbolArmWidth',label:'Cross arm width',value:n.symbolArmWidth||10,min:6,max:24})+selectControl('Cross corners','symbolCornerStyle',[{id:'inherit',label:'Match route corners'},...CORNER_STYLES],n.symbolCornerStyle||'inherit','node'),'node'):''}</details>`;
+  }
+  if(lines.length) {
+    const line=effectiveLine(map,lines[0]);
+    html+=`<details class="appearance-section" data-inspector-section-key="batch-line"><summary>Line appearance</summary>${batchScope(colorControl('Line color','color',line.color,'line')+lineStyleControls(line),'line')}</details>`;
+  }
+  return html+`<div class="delete-area"><button class="button danger full-width" data-action="delete">${icon('trash')} Delete selection</button></div>`;
+}
+function syncBatchControls() {
+  if(selection?.type!=='multi')return;
+  for(const type of ['node','line']) {
+    $$(`[data-batch-${type}-field]`).forEach(el=>{
+      const key=el.dataset[type==='node'?'batchNodeField':'batchLineField'];
+      const state=batchStyleValue(map,selection,type,key);let value=state.value;
+      if(value==='auto'&&['labelColor','labelFillColor','labelBorderColor'].includes(key))value=automaticLabelColor(key,effectiveLabel(map,selectedRecords(map,selection,'node')[0]||{}));
+      el.dataset.mixed=String(state.mixed);
+      if(el.tagName==='SELECT') {
+        el.querySelector('[data-mixed-option]')?.remove();
+        if(state.mixed)el.insertAdjacentHTML('afterbegin','<option value="" data-mixed-option disabled>Mixed</option>');
+        el.value=state.mixed?'':String(value);
+      } else if(el.type==='range') {
+        el.value=value;el.setAttribute('aria-valuetext',state.mixed?'Mixed':formatControlValue(key,value));
+      } else {const display=state.mixed?'':String(value);if(el.value!==display)el.value=display;el.placeholder=state.mixed?'Mixed':'';}
+      const field=el.closest('.range-field');
+      if(field)field.querySelectorAll('[data-value-for]').forEach(out=>out.textContent=state.mixed?'Mixed':formatControlValue(key,value));
+      const swatch=$(`[data-paint-preview="batch-${type}-${key}"]`);
+      if(swatch){swatch.dataset.mixed=String(state.mixed);swatch.style.setProperty('--paint-color',value);}
+    });
+  }
+  for(const [id,type,key] of [['batch-inherit-text','node','labelStyleMode'],['batch-inherit-line','line','styleMode']]) {
+    const el=$(`#${id}`);if(!el)continue;const state=batchStyleValue(map,selection,type,key);
+    el.checked=state.value==='global'&&!state.mixed;el.indeterminate=state.mixed;
+  }
+  const shape=batchStyleValue(map,selection,'node','symbol');
+  $$('[data-batch-symbol]').forEach(el=>{const active=!shape.mixed&&shape.value===el.dataset.batchSymbol;el.classList.toggle('active',active);el.setAttribute('aria-pressed',String(active));});
+  $$('[data-reset-text-color="batch-node"]').forEach(el=>{const state=batchStyleValue(map,selection,'node',el.dataset.resetLabelColor||'labelColor'),active=!state.mixed&&state.value==='auto';el.classList.toggle('active',active);el.setAttribute('aria-pressed',String(active));});
+  const labelShape=batchStyleValue(map,selection,'node','labelShape');
+  $$('[data-capsule-controls="batch-node"]').forEach(el=>el.hidden=!labelShape.mixed&&labelShape.value!=='capsule');
+  $$('[data-corner-radius]').forEach(el=>{const state=batchStyleValue(map,selection,'line','cornerRadius');el.classList.toggle('active',!state.mixed&&state.value===Number(el.dataset.cornerRadius));});
+}
 function renderInspector() {
   const n=selectedNode(), rawLine=selectedLine(), l=rawLine?effectiveLine(map,rawLine):null;
-  const key=`${presenting}:${selection?.type}:${selection?.id}`;
+  const key=`${presenting}:${selectionKey(selection)}`;
   const opened=key===inspectorSelectionKey?new Set($$('#inspector-content details[data-inspector-section-key][open]').map(el=>el.dataset.inspectorSectionKey)):new Set();
   const tab=key===inspectorSelectionKey?$('#inspector-content [data-inspector-tab][aria-pressed="true"]')?.dataset.inspectorTab||'style':'style';
   if(key!==inspectorSelectionKey){$('#inspector-content').scrollTop=0;inspectorSelectionKey=key;}
@@ -357,7 +437,10 @@ function renderInspector() {
     $('#inspector-content').innerHTML=n?`<div class="inspector-kicker">Station ${close}</div><h2 class="inspector-title">${esc(n.name)}</h2><div class="station-lines">${nodeLines(n.id).map(l=>`<span class="station-line-tag" style="--line-color:${l.color}"><i></i>${esc(l.name)}</span>`).join('')}</div><div class="station-details">${esc(n.description||'No description.')}</div>${safeUrl(n.url)?`<a class="present-link" href="${esc(safeUrl(n.url))}" target="_blank" rel="noopener noreferrer">Open link ↗</a>`:''}`:l?`<div class="inspector-kicker">Line ${close}</div><h2 class="inspector-title">${esc(l.name)}</h2><div class="selected-visual"><span class="line-code" style="--line-color:${l.color}">${esc(l.code)}</span><span>${lineNodes(l).filter(n=>n.kind!=='bend').length} stops</span></div>${lineNodes(l).filter(n=>n.kind!=='bend').map(n=>`<button class="line-row" data-present-node="${esc(n.id)}"><span class="hint-number">○</span><span class="line-name">${esc(n.name)}</span></button>`).join('')}`:`<div class="inspector-kicker">Map</div><h2 class="inspector-title">${esc(map.title)}</h2><p class="inspector-desc">Select a line or stop to explore.</p>`;
     return;
   }
-  if(n) {
+  if(selection?.type==='multi') {
+    $('#inspector-content').innerHTML=batchInspector(close);
+    syncBatchControls();
+  } else if(n) {
     const bend=n.kind==='bend';
     const tabs=`<div class="inspector-tabs" role="group" aria-label="Station properties"><button type="button" data-inspector-tab="style" aria-pressed="${tab==='style'}">Style</button><button type="button" data-inspector-tab="content" aria-pressed="${tab==='content'}">Content</button></div>`;
     $('#inspector-content').innerHTML=`<div class="inspector-kicker">${bend?'Bend':'Station'} ${close}</div>${bend?'<h2 class="inspector-title">Route bend</h2>':''}${!bend?`<div class="field inspector-name-field"><label for="station-name">Name</label><input class="input inspector-name" title="Rename stop" id="station-name" data-node-field="name" maxlength="100" value="${esc(n.name)}"></div><div class="station-continue-actions">${endpointButtons(n)}</div>${tabs}<div data-inspector-section="style" ${tab!=='style'?'hidden':''}><details class="appearance-section" data-inspector-section-key="text"><summary>Text</summary>${textStyleControls(n)}${labelPlacementControls(n)}</details>${stationSymbolControls(n)}</div><div data-inspector-section="content" ${tab!=='content'?'hidden':''}><div class="field"><label for="station-description">Description</label><textarea id="station-description" data-node-field="description" maxlength="10000" placeholder="Add context for this stop…">${esc(n.description)}</textarea></div><div class="field"><label for="station-url">Link</label><input class="input" type="url" id="station-url" data-node-field="url" value="${esc(n.url)}" placeholder="https://…"></div></div>`:''}<div class="field"><span class="field-label">Connected lines</span><div class="station-lines">${nodeLines(n.id).map(l=>`<button class="station-line-tag" data-select-line="${esc(l.id)}" style="--line-color:${l.color}"><i></i>${esc(l.name)}</button>`).join('')||'<span class="inspector-desc">No connected lines</span>'}</div></div><div class="inspector-divider"></div><button class="button outlined full-width" data-action="toggle-bend">${icon(bend?'station':'route')}${bend?'Convert to station':'Convert to bend'}</button><div class="delete-area"><button class="button danger full-width" data-action="delete">${icon('trash')} Delete ${bend?'bend':'station'}</button></div>`;
@@ -448,7 +531,8 @@ function addStop(point,lineId) {
 function removeSelection() {
   if(!selection)return;
   commit(()=>{
-    removeMapItem(map,selection);
+    selectionItems(selection).filter(item=>item.type==='node').forEach(item=>removeMapItem(map,item));
+    selectionItems(selection).filter(item=>item.type==='line').forEach(item=>removeMapItem(map,item));
     activeRoutePointId=null;
     selection=null;drawing=false;activeLineId=null;
   });setTool('select');
@@ -494,13 +578,19 @@ canvas.addEventListener('pointerdown',e=>{
   if(presenting){if(nodeEl)setSelection('node',nodeEl.dataset.nodeId);else if(lineEl)setSelection('line',lineEl.dataset.lineId);else setSelection(null);return;}
   if(tool==='line'){if(double&&drawing){finishLine();lastCanvasDown=null;}else addLinePoint(p,nodeEl?getNode(nodeEl.dataset.nodeId):nearestNode(p),e.shiftKey);return;}
   if(tool==='stop'){addStop(p,lineEl?.dataset.lineId);return;}
+  if(e.shiftKey) {
+    e.preventDefault();lastCanvasDown=null;
+    if(nodeEl&&getNode(nodeEl.dataset.nodeId)?.kind!=='bend')setSelection('node',nodeEl.dataset.nodeId,null,true);
+    else if(handleEl||lineEl)setSelection('line',handleEl?.dataset.routeLine||lineEl.dataset.lineId,null,true);
+    return;
+  }
   if(handleEl){
     const handle=readRouteHandle(handleEl), lineId=handle.lineId;
     setSelection('line',lineId,handle.nodeId);
     const action=double&&previous.lineId===lineId?(handle.nodeId?'remove-bend':'add-stop'):null;
     startRoutePointDrag(e,p,lineId,handle,action);return;
   }
-  if(nodeEl&&e.target.closest('.station-label')){
+  if(nodeEl&&e.target.closest('.station-label,.station-label-capsule')){
     const n=getNode(nodeEl.dataset.nodeId);setSelection('node',n.id);
     drag={type:'label',id:n.id,start:{x:n.labelOffsetX||0,y:n.labelOffsetY||0},point:p,clientX:e.clientX,clientY:e.clientY,moved:false,before:clone(map)};
     canvas.setPointerCapture(e.pointerId);e.preventDefault();return;
@@ -595,12 +685,12 @@ canvas.addEventListener('keydown',e=>{
   });
   requestAnimationFrame(()=>$(`[data-route-node="${CSS.escape(activeRoutePointId||'')}"]`)?.focus());
 });
-canvas.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){const node=e.target.closest('[data-node-id]');if(node){e.preventDefault();setSelection('node',node.dataset.nodeId);}}});
+canvas.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){const node=e.target.closest('[data-node-id]');if(node){e.preventDefault();setSelection('node',node.dataset.nodeId,null,e.shiftKey&&!presenting);}}});
 
 document.addEventListener('click',e=>{
   const continuation=e.target.closest('[data-continue-line]');
   if(continuation)continueFromEndpoint(continuation.dataset.continueLine,continuation.dataset.continueNode);
-  const select=e.target.closest('[data-select-line]');if(select&&!e.target.closest('[data-toggle-line]'))setSelection('line',select.dataset.selectLine);
+  const select=e.target.closest('[data-select-line]');if(select&&!e.target.closest('[data-toggle-line]'))setSelection('line',select.dataset.selectLine,null,e.shiftKey&&!presenting);
   const toggle=e.target.closest('[data-toggle-line]');if(toggle)commit(()=>{const l=getLine(toggle.dataset.toggleLine);l.visible=!l.visible;});
   const toolButton=e.target.closest('[data-tool]');if(toolButton&&toolButton!==canvas){const t=toolButton.dataset.tool;if(t==='line'){if(!drawing)createLine();}else setTool(t);}
   const theme=e.target.closest('[data-theme]');if(theme)commit(()=>map.theme=theme.dataset.theme);
@@ -608,9 +698,12 @@ document.addEventListener('click',e=>{
   const paletteColor=e.target.closest('[data-palette-color]');if(paletteColor)choosePaletteColor(paletteColor.dataset.paletteColor);
   if(!paletteButton&&!e.target.closest('#color-popover'))closeColorPalette();
   const shape=e.target.closest('[data-symbol]');
+  const batchShape=e.target.closest('[data-batch-symbol]');
+  if(batchShape&&selection?.type==='multi')commit(()=>applyBatchStyle(map,selection,'node','symbol',batchShape.dataset.batchSymbol));
   if(shape&&selectedNode())commit(()=>{const n=selectedNode();if(n.symbol!==shape.dataset.symbol&&shape.dataset.symbol==='cross'&&n.symbolCrossMode!=='manual')n.symbolAngle=0;n.symbol=shape.dataset.symbol;});
   const radiusPreset=e.target.closest('[data-corner-radius]');
   if(radiusPreset&&selectedLine())commit(()=>{makeLineCustom(selectedLine());selectedLine().cornerRadius=Number(radiusPreset.dataset.cornerRadius);});
+  if(radiusPreset&&selection?.type==='multi')commit(()=>applyBatchStyle(map,selection,'line','cornerRadius',Number(radiusPreset.dataset.cornerRadius)));
   const rotation=e.target.closest('[data-symbol-angle]');
   if(rotation&&selectedNode())commit(()=>selectedNode().symbolAngle=Number(rotation.dataset.symbolAngle));
   const action=e.target.closest('[data-action]')?.dataset.action;
@@ -630,15 +723,16 @@ document.addEventListener('click',e=>{
   if(removeArm&&selectedNode())commit(()=>{const n=selectedNode(),arms=normalizeCrossArms(n.symbolCrossArms);if(arms.length>2){arms.splice(Number(removeArm.dataset.removeArm),1);n.symbolCrossArms=normalizeCrossArms(arms);}});
   if(action==='toggle-bend')commit(()=>{const n=selectedNode();n.kind=n.kind==='bend'?'station':'bend';});
   if(action==='close-modal')$('#modal').close();
-  if(action==='reset-label-position')commit(()=>{selectedNode().labelOffsetX=0;selectedNode().labelOffsetY=0;});
+  if(action==='reset-label-position')commit(()=>{if(selection?.type==='multi'){applyBatchStyle(map,selection,'node','labelOffsetX',0);applyBatchStyle(map,selection,'node','labelOffsetY',0);}else if(selectedNode()){selectedNode().labelOffsetX=0;selectedNode().labelOffsetY=0;}});
   const resetTextColor=e.target.closest('[data-reset-text-color]');
-  if(resetTextColor)commit(()=>{if(resetTextColor.dataset.resetTextColor==='default')map.defaults=normalizeDefaults({...map.defaults,labelColor:'auto'});else if(selectedNode()){makeTextCustom(selectedNode());selectedNode().labelColor='auto';}});
+  if(resetTextColor)commit(()=>{const key=resetTextColor.dataset.resetLabelColor||'labelColor';if(resetTextColor.dataset.resetTextColor==='default')map.defaults=normalizeDefaults({...map.defaults,[key]:'auto'});else if(resetTextColor.dataset.resetTextColor==='batch-node')applyBatchStyle(map,selection,'node',key,'auto');else if(selectedNode()){makeTextCustom(selectedNode());selectedNode()[key]='auto';}});
   if(action==='all-text-global')commit(()=>map.nodes.forEach(n=>n.labelStyleMode='global'));
   const textPreset=e.target.closest('[data-text-preset]');
   if(textPreset)commit(()=>{
     const diagonal=textPreset.dataset.textPreset==='diagonal';
     const values={labelAngle:diagonal?-45:0,labelAnchor:diagonal?'start':'auto',labelFromStop:diagonal,labelGap:diagonal?10:15};
     if(textPreset.dataset.textScope==='default')map.defaults=normalizeDefaults({...map.defaults,...values});
+    else if(textPreset.dataset.textScope==='batch-node')Object.entries({...values,labelOffsetX:0,labelOffsetY:0}).forEach(([key,value])=>applyBatchStyle(map,selection,'node',key,value));
     else if(selectedNode()){makeTextCustom(selectedNode());Object.assign(selectedNode(),values,{labelOffsetX:0,labelOffsetY:0});}
   });
   if(action==='all-lines-global')commit(()=>map.lines.forEach(l=>l.styleMode='global'));
@@ -655,7 +749,7 @@ document.addEventListener('click',e=>{
   const presentNode=e.target.closest('[data-present-node]');if(presentNode)setSelection('node',presentNode.dataset.presentNode);
 });
 let editingField=null;
-document.addEventListener('focusin',e=>{if(e.target.matches('[data-node-field],[data-line-field],[data-cross-field],[data-default-field]'))editingField={target:e.target,changed:false};});
+document.addEventListener('focusin',e=>{if(e.target.matches('[data-node-field],[data-line-field],[data-cross-field],[data-default-field],[data-batch-node-field],[data-batch-line-field]'))editingField={target:e.target,changed:false};});
 function editCrossArm(e) {
   const target=e.target,n=selectedNode(),index=Number(target.dataset.crossIndex),key=target.dataset.crossField;
   if(!n||n.symbol!=='cross'||n.symbolCrossMode!=='manual'||target.value===''||!target.validity.valid)return;
@@ -669,7 +763,7 @@ function editDefaultField(e) {
   const target=e.target,key=target.dataset.defaultField;
   if(target.type==='number'&&(target.value===''||!target.validity.valid))return;
   if((/Color$/.test(key)||key==='color')&&!/^#[0-9a-fA-F]{6}$/.test(target.value))return;
-  const numeric=['cornerRadius','width','crossSize','crossLength','crossWidth','labelFontSize','labelWeight','labelAngle','labelGap'].includes(key),value=key==='labelFromStop'?target.value==='true':numeric?Number(target.value):target.value;
+  const numeric=['cornerRadius','width','crossSize','crossLength','crossWidth','labelPadding','labelBorderWidth','labelFontSize','labelWeight','labelAngle','labelGap'].includes(key),value=key==='labelFromStop'?target.value==='true':numeric?Number(target.value):target.value;
   const current=normalizeDefaults(map.defaults);if(current[key]===value&&!((key==='crossOutlineColor'&&current.crossOutline!=='custom')||(key==='crossFillColor'&&current.crossFill!=='custom')))return;
   if(!editingField||editingField.target!==target)editingField={target,changed:false};
   if(!editingField.changed){snapshot();editingField.changed=true;}
@@ -679,7 +773,22 @@ function editDefaultField(e) {
   map.defaults=normalizeDefaults({...current,...changes});save();render();
   $$('#modal [data-value-for]').filter(el=>el.dataset.valueFor===key).forEach(el=>el.textContent=formatControlValue(key,map.defaults[key]));
 }
+function editBatchField(target) {
+  const type=target.dataset.batchNodeField?'node':'line',key=target.dataset.batchNodeField||target.dataset.batchLineField;
+  if(selection?.type!=='multi'||target.value===''||!target.validity.valid)return;
+  if((/Color$/.test(key)||key==='color')&&!/^#[0-9a-f]{6}$/i.test(target.value))return;
+  const numeric=['labelPadding','labelBorderWidth','labelFontSize','labelWeight','labelGap','labelOffsetX','labelOffsetY','labelAngle','width','cornerRadius','symbolAngle','symbolSize','symbolLength','symbolArmWidth'].includes(key);
+  const value=key==='labelFromStop'?target.value==='true':numeric?Number(target.value):target.value;
+  const state=batchStyleValue(map,selection,type,key);
+  const force=(key==='symbolOutlineColor'||key==='symbolFillColor')&&selectedRecords(map,selection,'node').some(n=>effectiveNode(map,n)[key==='symbolOutlineColor'?'symbolOutline':'symbolFill']!=='custom');
+  if(!state.mixed&&state.value===value&&!force)return;
+  if(!editingField||editingField.target!==target)editingField={target,changed:false};
+  if(!editingField.changed){snapshot();editingField.changed=true;}
+  applyBatchStyle(map,selection,type,key,value);save();
+  render(['symbolOutline','symbolFill','labelPosition','labelShape'].includes(key));syncBatchControls();
+}
 function editField(e){
+  if(e.target.dataset.batchNodeField||e.target.dataset.batchLineField){editBatchField(e.target);return;}
   if(e.target.dataset.defaultField){editDefaultField(e);return;}
   if(e.target.dataset.crossField){editCrossArm(e);return;}
   const target=e.target, nodeKey=target.dataset.nodeField, lineKey=target.dataset.lineField;
@@ -687,7 +796,7 @@ function editField(e){
   if(!record)return;
   if(target.type==='number'&&(target.value===''||!target.validity.valid))return;
   if((/Color$/.test(key)||key==='color')&&!/^#[0-9a-fA-F]{6}$/.test(target.value))return;
-  const value=key==='labelFromStop'?target.value==='true':['labelFontSize','labelWeight','labelGap','labelOffsetX','labelOffsetY','labelAngle','width','cornerRadius','symbolAngle','symbolSize','symbolLength','symbolArmWidth'].includes(key)?Number(target.value):target.value;
+  const value=key==='labelFromStop'?target.value==='true':['labelPadding','labelBorderWidth','labelFontSize','labelWeight','labelGap','labelOffsetX','labelOffsetY','labelAngle','width','cornerRadius','symbolAngle','symbolSize','symbolLength','symbolArmWidth'].includes(key)?Number(target.value):target.value;
   const localLine=lineKey&&lineVisualKeys.includes(key),localCross=nodeKey&&record.symbol==='cross'&&crossVisualKeys.includes(key);
   const localText=nodeKey&&textStyleKeys.includes(key);
   const current=localText?effectiveLabel(map,record):localLine?effectiveLine(map,record):localCross?effectiveNode(map,record):record;
@@ -701,12 +810,13 @@ function editField(e){
   if(key==='labelPosition'&&effectiveLabel(map,record).labelFromStop){makeTextCustom(record);record.labelFromStop=false;}
   if(key==='symbolOutlineColor'){record.symbolOutline='custom';const source=$('[data-node-field="symbolOutline"]');if(source)source.value='custom';}
   if(key==='symbolFillColor'){record.symbolFill='custom';const source=$('[data-node-field="symbolFill"]');if(source)source.value='custom';}
-  record[key]=value;save();render(['symbolCrossMode','labelPosition','symbolOutline','symbolFill'].includes(key));
+  record[key]=value;save();render(['symbolCrossMode','labelPosition','symbolOutline','symbolFill','labelShape'].includes(key));
   $$('[data-node-field]').filter(el=>el!==target&&el.dataset.nodeField===key).forEach(el=>el.value=value);
   $$('[data-value-for]').filter(el=>el.dataset.valueFor===key).forEach(el=>el.textContent=formatControlValue(key,value));
   const preview=$(`[data-paint-preview="${nodeKey?'node':'line'}-${key}"]`);if(preview)preview.style.setProperty('--paint-color',value);
   if(localText&&$('#inherit-text'))$('#inherit-text').checked=false;
-  if(key==='labelColor')$$('[data-reset-text-color="node"]').forEach(el=>{el.classList.remove('active');el.setAttribute('aria-pressed','false');});
+  if(localText)syncLabelPaintControls('node',effectiveLabel(map,record));
+  $$('[data-reset-text-color="node"]').filter(el=>el.dataset.resetLabelColor===key).forEach(el=>{el.classList.remove('active');el.setAttribute('aria-pressed','false');});
   if(localLine&&$('#inherit-line')){$('#inherit-line').checked=false;$('#line-style-status').textContent='Custom style for this line.';}
   if(localCross&&$('#inherit-cross')){$('#inherit-cross').checked=false;$('#cross-style-status').textContent='Custom appearance for this cross.';}
   if(key==='cornerRadius')$$('[data-corner-radius]').forEach(el=>el.classList.toggle('active',Number(el.dataset.cornerRadius)===value));
@@ -715,12 +825,15 @@ function editField(e){
 document.addEventListener('input',editField);
 document.addEventListener('change',editField);
 document.addEventListener('change',e=>{
+  if(e.target.matches('[data-batch-node-field],[data-batch-line-field]'))editingField=null;
+  if(e.target.id==='batch-inherit-line')commit(()=>applyBatchStyle(map,selection,'line','styleMode',e.target.checked?'global':'custom'));
+  if(e.target.id==='batch-inherit-text')commit(()=>applyBatchStyle(map,selection,'node','labelStyleMode',e.target.checked?'global':'custom'));
   if(e.target.id==='inherit-line'&&selectedLine())commit(()=>{if(e.target.checked)selectedLine().styleMode='global';else makeLineCustom(selectedLine());});
   if(e.target.id==='inherit-text'&&selectedNode())commit(()=>{if(e.target.checked)selectedNode().labelStyleMode='global';else makeTextCustom(selectedNode());});
   if(e.target.id==='inherit-cross'&&selectedNode())commit(()=>{if(e.target.checked)selectedNode().crossStyleMode='global';else makeCrossCustom(selectedNode());});
 });
 $('#map-styles').onclick=openStyleDialog;
-$('#line-list').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('[data-select-line]')){e.preventDefault();setSelection('line',e.target.dataset.selectLine);}});
+$('#line-list').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('[data-select-line]')){e.preventDefault();setSelection('line',e.target.dataset.selectLine,null,e.shiftKey&&!presenting);}});
 $('#add-line').onclick=$('#draw-new-line').onclick=createLine;
 $('#network-toggle').onclick=()=>togglePanel('left');
 $('#properties-toggle').onclick=()=>togglePanel('right');
@@ -744,6 +857,10 @@ function setPresent(value){
 }
 $('#present').onclick=()=>setPresent(true);$('#exit-present').onclick=()=>setPresent(false);
 
+document.addEventListener('keydown',e=>{
+  const factor=mapZoomShortcut(e);if(factor===null||e.defaultPrevented)return;
+  e.preventDefault();zoom(factor);
+},{capture:true});
 document.addEventListener('keydown',e=>{
   if(e.defaultPrevented)return;
   if(e.key==='Escape'&&paletteTarget){e.preventDefault();closeColorPalette();return;}
@@ -779,7 +896,7 @@ $('#rename-map').onclick=()=>{
   $('#map-form').onsubmit=e=>{e.preventDefault();commit(()=>{map.title=$('#map-name-input').value.trim()||'Untitled map';map.subtitle=$('#map-subtitle-input').value.trim();});$('#modal').close();};
 };
 $('#map-details').onclick=()=>$('#rename-map').click();
-$('#help').onclick=()=>openModal(`${modalHead('Help & shortcuts')}<p class="modal-intro">Draw a line by clicking to place stops. The route automatically follows metro-style angles. Click an existing stop to connect lines; drag one stop onto another to merge them.</p><div class="shortcut-list">${[['Select & move','V'],['New line','L'],['Insert a stop','S'],['Pan the canvas','H / Space'],['Finish a line','Enter'],['Place a route bend','Shift + click'],['Fit the whole map','F'],['Lines panel','['],['Properties panel',']'],['Fullscreen','\\'],['Undo / redo','⌘Z / ⌘⇧Z'],['Remove selection','Delete'],['Cancel / exit','Esc']].map(([t,k])=>`<div class="shortcut-item"><span>${t}</span><kbd>${k}</kbd></div>`).join('')}</div><div class="onboard-note">Drag a selected line’s diamond handles, or drag any segment, to reshape the route locally. Double-click a bend to remove it; double-click the route itself to insert a station. Use <strong>Continue this line</strong> to extend a selected route. In presentation mode, clicking a station opens its story. Your map is saved on this browser; export JSON to back it up or continue on another device.</div>`);
+$('#help').onclick=()=>openModal(`${modalHead('Help & shortcuts')}<p class="modal-intro">Draw a line by clicking to place stops. The route automatically follows metro-style angles. Click an existing stop to connect lines; drag one stop onto another to merge them.</p><div class="shortcut-list">${[['Select & move','V'],['New line','L'],['Insert a stop','S'],['Pan the canvas','H / Space'],['Finish a line','Enter'],['Select multiple items','Shift + click'],['Place a route bend','Shift + click while drawing'],['Fit the whole map','F'],['Zoom the map','Ctrl/Cmd + / −'],['Lines panel','['],['Properties panel',']'],['Fullscreen','\\'],['Undo / redo','⌘Z / ⌘⇧Z'],['Remove selection','Delete'],['Cancel / exit','Esc']].map(([t,k])=>`<div class="shortcut-item"><span>${t}</span><kbd>${k}</kbd></div>`).join('')}</div><div class="onboard-note">Drag a selected line’s diamond handles, or drag any segment, to reshape the route locally. Double-click a bend to remove it; double-click the route itself to insert a station. Use <strong>Continue this line</strong> to extend a selected route. In presentation mode, clicking a station opens its story. Your map is saved on this browser; export JSON to back it up or continue on another device.</div>`);
 $('#export').onclick=()=>openModal(`${modalHead('Export map')}<p class="modal-intro">Take your map with you. Export a crisp vector graphic or save an editable copy of the whole network.</p><div class="export-options"><button class="export-option" data-action="export-svg">${icon('export')}<strong>Export SVG</strong><p>A sharp, scalable map for documents, slides, and print.</p><span class="keycap">VECTOR IMAGE</span></button><button class="export-option" data-action="export-json">${icon('file')}<strong>Save map file</strong><p>Keep all your lines, stops, and stories. Reopen it in Pointwise.</p><span class="keycap">EDITABLE JSON</span></button></div><div class="modal-footer">Bring a saved map back into the studio.<button class="button outlined" data-action="import">Import JSON</button></div>`);
 function filename(ext){return `${map.title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'pointwise-map'}.${ext}`;}
 function download(data,type,name){const url=URL.createObjectURL(new Blob([data],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);}

@@ -142,3 +142,11 @@
 .inspector .label-drag-hint{font-size:12.5px;line-height:1.5;margin:9px 0}
 .station-continue-actions .button{font-size:13px}
 @media(pointer:coarse){.palette-swatch{width:28px;height:28px}.shared-palette{gap:14px 8px}.paint-palette-trigger{min-width:36px;min-height:36px}.inspector .symbol-option{min-height:44px}}
+.batch-title{margin:4px 0 3px;font-size:21px}.batch-counts{font-size:13px;color:var(--muted);margin:0 0 15px}
+.paint-palette-trigger[data-mixed=true] .paint-chip{background:linear-gradient(135deg,#e4dfee 0 50%,#8e849d 50%)}
+.inspector [data-mixed=true]{color:#91869c}.inspector input[data-mixed=true]::placeholder{color:#91869c}
+.station-label-capsule{cursor:grab;pointer-events:all}.station-label-capsule:active{cursor:grabbing}
+.capsule-text-controls{padding:0 10px 1px;border-left:2px solid var(--border);margin:10px 0 14px}
+.global-text-section .capsule-text-controls{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;column-gap:24px}
+.global-text-section .capsule-text-controls .field-pair{grid-column:1/-1}
+@media(max-width:600px){.global-text-section .capsule-text-controls{grid-template-columns:1fr}}
