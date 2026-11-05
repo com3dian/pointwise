@@ -179,7 +179,7 @@ function render(inspector=true) {
 }
 function renderLines() {
   $('#line-list').innerHTML=map.lines.map(l=>`<div class="line-row ${isSelected(selection,'line',l.id)?'selected':''} ${!l.visible?'hidden-line':''}" data-select-line="${esc(l.id)}" role="button" tabindex="0" aria-pressed="${isSelected(selection,'line',l.id)}" aria-label="Edit ${esc(l.name)} line"><span class="line-code" style="--line-color:${l.color}">${esc(l.code)}</span><span class="line-info"><span class="line-name">${esc(l.name)}</span><span class="line-stats">${lineNodes(l).filter(n=>n.kind!=='bend').length} stops</span></span><button class="line-eye" data-toggle-line="${esc(l.id)}" aria-label="${l.visible?'Hide':'Show'} ${esc(l.name)}" title="${l.visible?'Hide':'Show'} line">${icon('eye')}</button></div>`).join('');
-  $('#map-legend').innerHTML=visualLines().map(l=>`<span class="legend-item"><svg viewBox="0 0 26 12" aria-hidden="true">${renderLineStroke('M2 6H24',{...l,width:4},{color:map.theme==='night'?'#aaaaaa':'#888888',paper:paperColor()})}</svg>${esc(l.code)} &nbsp;${esc(l.name)}</span>`).join('');
+  $('#map-legend').innerHTML=visualLines().map(l=>`<span class="legend-item"><svg viewBox="0 0 26 12" aria-hidden="true">${renderLineStroke('M2 6H24',{...l,width:4},{color:map.theme==='mono'?'#30382e':l.color,paper:paperColor()})}</svg>${esc(l.code)} &nbsp;${esc(l.name)}</span>`).join('');
 }
 function linePath(line) {
   line=effectiveLine(map,line);

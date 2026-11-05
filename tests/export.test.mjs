@@ -100,13 +100,13 @@ test('large station symbols expand bounds and leave labels outside the glyph', (
   assert(Math.abs(rightX - 3000 - extent - 15) < 0.001);
 });
 
-test('legend samples are grayscale while route and station colors remain unchanged', () => {
+test('legend samples match their route colors in light, dark, and monochrome themes', () => {
   const sample = map([node('a', 0, 0), node('b', 100, 0)], [line('blue', ['a', 'b']), line('orange', ['a', 'b'], { color:'#E89A38', style:'dashed' })]);
   for (const theme of ['paper','night','mono']) {
     const svg = buildSVG({...sample,theme});
     const legendStrokes = [...svg.matchAll(/class="legend-item"[^>]*><g[^>]*><path[^>]*stroke="(#[a-f0-9]{6})"/gi)].map(match => match[1]);
-    assert.equal(legendStrokes.length, 2);
-    assert(legendStrokes.every(hex => hex.slice(1,3) === hex.slice(3,5) && hex.slice(3,5) === hex.slice(5,7)));
+    assert.deepEqual(legendStrokes,theme==='mono'?['#344038','#344038']:['#4068E8','#E89A38']);
+    assert.match(svg.split('class="legend-item"')[2],/stroke-dasharray="6 10"/);
     if (theme !== 'mono') {
       const content = svg.split('class="map-content"')[1].split('class="legend-item"')[0];
       assert.match(content,/stroke="#4068E8"/);

@@ -80,7 +80,6 @@ export function buildSVG(map) {
   const background = night ? '#1e2925' : mono ? '#fbfaf6' : '#f8f9f5';
   const ink = night ? '#e3eadc' : '#344038';
   const color = (line) => mono ? ink : routeColor(line);
-  const legendColor = night ? '#aaaaaa' : '#888888';
   const margin = 48;
   const extents = [];
 
@@ -128,7 +127,7 @@ export function buildSVG(map) {
       legendX = margin;
       legendY += 48;
     }
-    const item = `<g class="legend-item" transform="translate(${number(legendX)} ${number(legendY)})">${renderLineStroke('M0 0h24', {...line,width:5}, {color:legendColor,paper:background})}<text x="36" y="7.5" font-family="Arial, sans-serif" font-size="21" fill="${ink}">${xml(text)}</text></g>`;
+    const item = `<g class="legend-item" transform="translate(${number(legendX)} ${number(legendY)})">${renderLineStroke('M0 0h24', {...line,width:5}, {color:color(line),paper:background})}<text x="36" y="7.5" font-family="Arial, sans-serif" font-size="21" fill="${ink}">${xml(text)}</text></g>`;
     legendX += itemWidth;
     return item;
   }).join('');

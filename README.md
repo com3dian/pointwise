@@ -52,7 +52,7 @@ Select a station, then open **Station appearance**. The twelve base symbols incl
 
 Appearance changes support undo and are retained in browser saves, JSON files, and SVG exports. Older map files remain compatible.
 
-Legend swatches and station-picker previews use grayscale; routes on the map retain their colors. Directional station symbols have a Rotation slider and exact angle field at the top of Station appearance.
+The bottom legend uses each route's displayed color and line pattern, including in SVG exports. Station-picker previews remain grayscale. Directional station symbols have a Rotation slider and exact angle field at the top of Station appearance.
 
 Cross stops default to **Follow connected lines**. Their arms follow the actual incoming and outgoing route segments, including diagonal crossings and T-junctions. Choose **Adjust these arms** (or **Adjust arms individually**) to edit each arm’s angle and length, add arms, or remove them. **Match lines again** restores automatic alignment and resets the overall rotation. Manual arm angles are measured before overall symbol rotation; in map coordinates, 0° points right and 90° points down.
 
