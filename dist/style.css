@@ -206,6 +206,7 @@
 .station-story-heading .icon-button svg{width:15px;height:15px}
 .station-story-content{overflow:auto;min-height:0;padding:0 16px 16px;overscroll-behavior:contain;scrollbar-width:thin}
 .markdown-body{font-size:14px;line-height:1.65;overflow-wrap:anywhere}
+.markdown-body em{font-synthesis:style}
 .markdown-body>:first-child{margin-top:0}.markdown-body>:last-child{margin-bottom:0}
 .markdown-body p,.markdown-body ul,.markdown-body ol,.markdown-body blockquote,.markdown-body pre,.markdown-body table{margin:0 0 12px}
 .markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6{line-height:1.4;margin:16px 0 8px;font-weight:650}
